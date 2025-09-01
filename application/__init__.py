@@ -1,0 +1,27 @@
+from flask import Flask, render_template
+from flask_jwt_extended import JWTManager
+
+from application.src.models import db
+from application.src.config.ErrorHandlers import registerErrorHandlers
+from application.src.config.Config import Config  # 환경 설정 불러오기
+
+# Flask 앱 초기화
+app = Flask(__name__)
+
+# Flask 환경 설정 적용
+app.config.from_object(Config)
+
+# `db`를 Flask 앱에 바인딩
+db.init_app(app)
+
+# JWT 초기화
+jwt = JWTManager(app)
+
+# 에러 핸들러 등록
+# registerErrorHandlers(app, jwt)
+
+# 블루프린트 및 라우트 관련 모듈 import (순환 참조 방지)
+from .src.main import main
+
+# 블루프린트 등록
+app.register_blueprint(main)
