@@ -22,6 +22,10 @@ jwt = JWTManager(app)
 
 # 블루프린트 및 라우트 관련 모듈 import (순환 참조 방지)
 from .src.main import main
+from .src.login import login
+from .src.supplier import supplier
 
 # 블루프린트 등록
 app.register_blueprint(main)
+app.register_blueprint(login)
+app.register_blueprint(supplier)

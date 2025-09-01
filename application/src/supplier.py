@@ -2,12 +2,12 @@ from flask import Blueprint, render_template, request
 from oauth2client.service_account import ServiceAccountCredentials
 import os, gspread
 
-main = Blueprint("main", __name__, url_prefix="/")
+supplier = Blueprint("supplier", __name__, url_prefix="/supplier")
 
-# main 페이지 이동
-@main.route("/")
+# supplier 페이지 이동
+@supplier.route("/")
 def index():
   return render_template(
-    'index.html',
-    pageName='main'
+    'supplier.html',
+    pageName='supplier'
   )

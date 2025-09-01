@@ -1,0 +1,118 @@
+<!-- header -->
+{% include './common/header.html' %}
+
+<body id="page-top">
+
+  <!-- Page Wrapper -->
+  <div id="wrapper">
+
+    <!-- Sidebar -->
+    {% include './common/sidebar.html' %}
+    <!-- End of Sidebar -->
+
+    <!-- Content Wrapper -->
+    <div id="content-wrapper" class="d-flex flex-column">
+
+      <!-- Main Content -->
+      <div id="content">
+
+        <!-- Begin Page Content -->
+        <div class="container-fluid">
+
+          <!-- Page Heading -->
+          <h1 class="h3 mb-2 text-gray-800">공급사 관리</h1>
+          <p class="mb-4">공급사 관리 관련된 간단한 설명 들어갈 예정</p>
+
+          <!-- DataTales Example -->
+          <div class="card shadow mb-4">
+            <div class="card-header py-3 d-sm-flex align-items-center justify-content-between">
+              <h6 class="m-0 font-weight-bold text-primary">공급사 리스트</h6>
+              <a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">공급사 등록</a>
+            </div>
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-bordered text-center" id="dataTable" width="100%" cellspacing="0">
+                  <thead>
+                    <tr>
+                      <th>No</th>
+                      <th>회사명</th>
+                      <th>Slack</th>
+                      <th>공급사 ID</th>
+                      <th>공급사 PW</th>
+                      <th>자사몰 URL</th>
+                      <th>담당자명</th>
+                      <th>직책</th>
+                      <th>연락처</th>
+                      <th>이메일</th>
+                      <th>기능</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Tiger Nixon</td>
+                      <td>생성완료</td>
+                      <td>Edinburgh</td>
+                      <td>61</td>
+                      <td>2011/04/25</td>
+                      <td>ㅇㅇㅇ</td>
+                      <td>대표</td>
+                      <td>010-0000-0000</td>
+                      <td>test@test.com</td>
+                      <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Garrett Winters</td>
+                      <td>생성완료</td>
+                      <td>Tokyo</td>
+                      <td>63</td>
+                      <td>2011/07/25</td>
+                      <td>ㅇㅇㅇ</td>
+                      <td>대표</td>
+                      <td>010-0000-0000</td>
+                      <td>test@test.com</td>
+                      <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
+                    </tr>
+                    <tr>
+                      <td>3</td>
+                      <td>Ashton Cox</td>
+                      <td>생성완료</td>
+                      <td>San Francisco</td>
+                      <td>66</td>
+                      <td>2009/01/12</td>
+                      <td>ㅇㅇㅇ</td>
+                      <td>대표</td>
+                      <td>010-0000-0000</td>
+                      <td>test@test.com</td>
+                      <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <!-- /.container-fluid -->
+
+      </div>
+      <!-- End of Main Content -->
+
+      <!-- Footer -->
+      {% include './common/copyright.html' %}
+      <!-- End of Footer -->
+
+    </div>
+    <!-- End of Content Wrapper -->
+
+  </div>
+  <!-- End of Page Wrapper -->
+
+  <!-- Scroll to Top Button-->
+  <a class="scroll-to-top rounded" href="#page-top">
+    <i class="fas fa-angle-up"></i>
+  </a>
+
+  <!-- Footer-->
+  {% include './common/footer.html' %}
