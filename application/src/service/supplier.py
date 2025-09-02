@@ -1,67 +1,51 @@
 from flask import Blueprint, render_template, request, jsonify
 from sqlalchemy.exc import SQLAlchemyError
-
 from application.src.models.SupplierList import SupplierList
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 
 supplier = Blueprint("supplier", __name__, url_prefix="/supplier")
 
-
-# ------------------------------------------------------------------------------
+# -----------------------------------
 # View: 공급사 관리 페이지
-#  - 서버 렌더링으로 최초 진입 시 목록을 내려준다.
-#  - 테이블 재조회는 /ajax/list 를 통해 비동기로 가져오는 흐름 권장.
-# ------------------------------------------------------------------------------
+# -----------------------------------
 @supplier.route("/", methods=["GET"])
 def index():
   supplier_list = SupplierListRepository.findAll()
-  return render_template(
-    "supplier.html",
-    pageName="supplier",
-    supplierList=supplier_list
-  )
+  return render_template("supplier.html", pageName="supplier", supplierList=supplier_list)
 
-
-# ------------------------------------------------------------------------------
-# Ajax: 공급사 신규 등록
-#  - 수신: FormData 또는 JSON 모두 허용
-#  - 검증: 회사명 필수, supplierID 최소 6자(자유형식)
-#  - 저장: 정상 저장 시 20000 + 생성된 seq 반환
-# ------------------------------------------------------------------------------
+# -----------------------------------
+# Ajax: 등록
+# -----------------------------------
 @supplier.route("/ajax/addSupplier", methods=["POST"])
 def addSupplier():
   try:
-    # 1) 입력 수신 (JSON 우선, 없으면 form)
     data = request.get_json(silent=True) or request.form
 
-    # 2) 필드 파싱 + 공백 정리
-    def g(key):  # 작은 헬퍼
-      v = data.get(key)
+    def g(k):
+      v = data.get(k)
       return v.strip() if isinstance(v, str) else v
 
     company_name = g("supplierCompanyName") or ""
-    supplier_id = g("supplierID") or ""         # 자유형식 (최소 6자)
-    supplier_pw = g("supplierPW") or None
+    supplier_id  = g("supplierID") or ""   # 자유형식 + 최소 6자
+    supplier_pw  = g("supplierPW") or None
     supplier_url = g("supplierURL") or None
-    manager = g("supplierManager") or None
+    manager      = g("supplierManager") or None
     manager_rank = g("supplierManagerRank") or None
-    number = g("supplierNumber") or None
-    email = g("supplierEmail") or None
+    number       = g("supplierNumber") or None
+    email        = g("supplierEmail") or None
 
-    # 3) 간단 검증 (프런트 규칙과 일치)
+    # 검증 (프런트와 일치)
     errors = {}
     if not company_name:
       errors["supplierCompanyName"] = "회사명은 필수입니다."
     if not supplier_id or len(supplier_id) < 6:
       errors["supplierID"] = "ID는 6자 이상 입력해 주세요."
-
     if errors:
       return jsonify({"code": 40001, "errors": errors}), 400
 
-    # 4) 엔티티 구성
-    supplier_obj = SupplierList(
+    s = SupplierList(
       companyName=company_name,
-      supplierID=supplier_id,      # 자유형식 가정
+      supplierID=supplier_id,
       supplierPW=supplier_pw,
       supplierURL=supplier_url,
       manager=manager,
@@ -69,44 +53,125 @@ def addSupplier():
       number=number,
       email=email
     )
-
-    # 5) 저장
-    SupplierListRepository.save(supplier_obj)
-
-    return jsonify({"code": 20000, "seq": supplier_obj.seq})
+    SupplierListRepository.save(s)
+    return jsonify({"code": 20000, "seq": s.seq})
 
   except SQLAlchemyError as e:
-    # DB 제약/세션 오류 처리
     SupplierListRepository.rollback_if_needed()
-    return jsonify({"code": 50001, "message": "DB 처리 중 오류", "detail": str(e.__dict__.get('orig') or e)}), 500
+    return jsonify({"code": 50001, "message": "DB 오류", "detail": str(e.__dict__.get('orig') or e)}), 500
   except Exception as e:
     SupplierListRepository.rollback_if_needed()
-    return jsonify({"code": 50000, "message": "처리 중 예외", "detail": str(e)}), 500
+    return jsonify({"code": 50000, "message": "예외 발생", "detail": str(e)}), 500
 
+# -----------------------------------
+# Ajax: 단건 조회(수정 프리필)
+# -----------------------------------
+@supplier.route("/ajax/<int:seq>", methods=["GET"])
+def getSupplier(seq: int):
+  s = SupplierListRepository.findBySeq(seq)
+  if not s:
+    return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
 
-# ------------------------------------------------------------------------------
-# Ajax: 공급사 리스트 조회
-#  - 응답을 프런트에서 바로 렌더링할 수 있도록 dict 배열로 직렬화
-#  - GET 사용을 권장 (캐싱/디버깅 용이)
-# ------------------------------------------------------------------------------
-@supplier.route("/ajax/list", methods=["GET"])
+  def to_dict(x: SupplierList) -> dict:
+    return {
+      "seq": x.seq,
+      "companyName": x.companyName or "",
+      "supplierID": x.supplierID or "",
+      "supplierPW": "",  # 보안상 미노출
+      "supplierURL": x.supplierURL or "",
+      "manager": x.manager or "",
+      "managerRank": x.managerRank or "",
+      "number": x.number or "",
+      "email": x.email or "",
+      "stateCode": getattr(x, "stateCode", "") or "",
+      "updatedAt": x.updatedAt.isoformat() if getattr(x, "updatedAt", None) else None
+    }
+
+  return jsonify({"code": 20000, "item": to_dict(s)})
+
+# -----------------------------------
+# Ajax: 수정(낙관적 잠금)
+# -----------------------------------
+@supplier.route("/ajax/update", methods=["POST"])
+def updateSupplier():
+  try:
+    data = request.get_json(silent=True) or request.form
+
+    def g(k):
+      v = data.get(k)
+      return v.strip() if isinstance(v, str) else v
+
+    seq = int(g("seq") or 0)
+    expected_updated_at = g("updatedAt")
+
+    s = SupplierListRepository.findBySeq(seq)
+    if not s:
+      return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
+
+    # 낙관적 잠금(선택): 클라이언트가 보낸 updatedAt과 현재 DB값 비교
+    if expected_updated_at and s.updatedAt and s.updatedAt.isoformat() != expected_updated_at:
+      return jsonify({"code": 40900, "message": "다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요."}), 409
+
+    company_name = g("companyName") or ""
+    supplier_id  = g("supplierID") or ""      # 자유형식 + 최소 6자
+    supplier_pw  = g("supplierPW")            # 공란이면 변경하지 않음
+    supplier_url = g("supplierURL") or None
+    manager      = g("manager") or None
+    manager_rank = g("managerRank") or None
+    number       = g("number") or None
+    email        = g("email") or None
+    state_code   = g("stateCode") or None
+
+    # 서버 검증
+    errors = {}
+    if not company_name:
+      errors["companyName"] = "회사명은 필수입니다."
+    if not supplier_id or len(supplier_id) < 6:
+      errors["supplierID"] = "ID는 6자 이상 입력해 주세요."
+    if errors:
+      return jsonify({"code": 40001, "errors": errors}), 400
+
+    # 반영 (PW는 공란이면 유지)
+    s.companyName = company_name
+    s.supplierID  = supplier_id
+    if supplier_pw is not None and supplier_pw != "":
+      s.supplierPW = supplier_pw
+    s.supplierURL = supplier_url
+    s.manager = manager
+    s.managerRank = manager_rank
+    s.number = number
+    s.email = email
+
+    SupplierListRepository.save(s)
+    return jsonify({"code": 20000, "seq": s.seq,
+                    "updatedAt": s.updatedAt.isoformat() if getattr(s, "updatedAt", None) else None})
+
+  except SQLAlchemyError as e:
+    SupplierListRepository.rollback_if_needed()
+    return jsonify({"code": 50001, "message": "DB 오류", "detail": str(e.__dict__.get('orig') or e)}), 500
+  except Exception as e:
+    SupplierListRepository.rollback_if_needed()
+    return jsonify({"code": 50000, "message": "예외 발생", "detail": str(e)}), 500
+
+# -----------------------------------
+# Ajax: 리스트(JSON) - 프런트가 POST 호출중
+# -----------------------------------
+@supplier.route("/ajax/getSupplierList", methods=["POST"])
 def listSuppliers():
   items = SupplierListRepository.findAll()
 
-  # SQLAlchemy 모델 → dict 로 변환
-  def to_dict(s: SupplierList) -> dict:
+  def to_dict(x: SupplierList) -> dict:
     return {
-      "seq": s.seq,
-      "companyName": s.companyName or "",
-      "stateCode": getattr(s, "stateCode", None) or "",
-      "supplierID": s.supplierID or "",
-      "supplierPW": s.supplierPW or "",
-      "supplierURL": s.supplierURL or "",
-      "manager": s.manager or "",
-      "managerRank": s.managerRank or "",
-      "number": s.number or "",
-      "email": s.email or ""
+      "seq": x.seq,
+      "companyName": x.companyName or "",
+      "stateCode": getattr(x, "stateCode", "") or "",
+      "supplierID": x.supplierID or "",
+      "supplierPW": x.supplierPW or "",
+      "supplierURL": x.supplierURL or "",
+      "manager": x.manager or "",
+      "managerRank": x.managerRank or "",
+      "number": x.number or "",
+      "email": x.email or ""
     }
 
-  rows = [to_dict(x) for x in items]
-  return jsonify({"code": 20000, "list": rows})
+  return jsonify({"code": 20000, "supplierList": [to_dict(s) for s in items]})
