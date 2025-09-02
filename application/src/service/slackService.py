@@ -285,7 +285,6 @@ def _send_broadcast_to_common_channel(created_channel_id: str, created_channel_n
         continue
       return
 
-
 # ========= 메인: 채널 생성 → 관리자 초대 → 웰컴 → 공통 채널 방송 =========
 def create_slack_channel_only(supplier: SupplierList) -> Dict[str, Any]:
   """

@@ -40,6 +40,9 @@ class SupplierList(db.Model):
   
   # 상태 코드 (NULL 가능)
   stateCode: Mapped[Optional[str]] = mapped_column("STATE_CODE", db.String(4), nullable=True, comment="상태 코드")
+  
+  # 채널 ID (NULL 가능)
+  channelId: Mapped[Optional[str]] = mapped_column("CHANNEL_ID", db.String(30), nullable=True, comment="채널 ID")
 
   # 등록일 (기본값: 현재 시간)
   createdAt: Mapped[datetime] = mapped_column(
