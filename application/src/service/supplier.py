@@ -120,7 +120,6 @@ def updateSupplier():
     manager_rank = g("managerRank") or None
     number       = g("number") or None
     email        = g("email") or None
-    state_code   = g("stateCode") or None
 
     # 서버 검증
     errors = {}

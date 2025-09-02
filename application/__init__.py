@@ -20,6 +20,10 @@ jwt = JWTManager(app)
 # 에러 핸들러 등록
 # registerErrorHandlers(app, jwt)
 
+# 백그라운드 스케줄러 가동
+from application.src.scheduler import start_scheduler
+start_scheduler(app)
+  
 # 블루프린트 및 라우트 관련 모듈 import (순환 참조 방지)
 from .src.service.main import main
 from .src.service.login import login
