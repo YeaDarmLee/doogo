@@ -1,6 +1,333 @@
 <!-- header -->
 {% include './common/header.html' %}
 
+<script>
+  /**
+   * 공급사 목록 테이블 렌더러
+   * - DataTables 사용 시: data 배열을 rows로 변환하여 DataTable에 주입
+   * - 미사용 시: tbody HTML 직접 갱신
+   */
+  function renderSupplierTable(data) {
+    const tableSel = '#dataTable';
+    const hasDT = $.fn.DataTable && $.fn.dataTable.isDataTable(tableSel);
+
+    if (hasDT) {
+      const dt = $(tableSel).DataTable();
+      const rows = data.map(s => ([
+        s.seq,
+        s.companyName,
+        s.stateCode || '',
+        s.supplierID,
+        s.supplierPW,
+        s.supplierURL,
+        s.manager,
+        s.managerRank,
+        s.number,
+        s.email,
+        `<a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a>`
+      ]));
+      dt.clear();
+      dt.rows.add(rows);
+      dt.draw(false);
+    } else {
+      const tbody = document.querySelector('#dataTable tbody');
+      let html = '';
+      data.forEach(s => {
+        html += `
+          <tr>
+            <td>${s.seq}</td>
+            <td>${escapeHtml(s.companyName)}</td>
+            <td>${escapeHtml(s.stateCode || '')}</td>
+            <td>${escapeHtml(s.supplierID)}</td>
+            <td>${escapeHtml(s.supplierPW)}</td>
+            <td>${escapeHtml(s.supplierURL)}</td>
+            <td>${escapeHtml(s.manager)}</td>
+            <td>${escapeHtml(s.managerRank)}</td>
+            <td>${escapeHtml(s.number)}</td>
+            <td>${escapeHtml(s.email)}</td>
+            <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
+          </tr>`;
+      });
+      tbody.innerHTML = html;
+    }
+  }
+
+  /**
+   * 간단 XSS 방지용 HTML 이스케이프
+   */
+  function escapeHtml(s) {
+    return String(s || '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  /**
+   * 서버에서 최신 공급사 리스트를 가져와 테이블을 갱신
+   * - 현재 엔드포인트: /supplier/ajax/list (POST)
+   *   필요 시 GET /supplier/ajax/list 로 전환 가능
+   */
+  function reloadSupplierTable() {
+    return $.ajax({
+      url: '/supplier/ajax/list',
+      method: 'GET',
+      dataType: 'json'
+    }).then(res => {
+      if (res.code === 20000 && Array.isArray(res.list)) {
+        renderSupplierTable(res.list);
+      } else {
+        alertStart('error', '리스트 조회 실패', '공급사 리스트를 불러오지 못했습니다.');
+      }
+    }).catch(() => {
+      alertStart('error', '리스트 조회 실패', '공급사 리스트를 불러오지 못했습니다.');
+    });
+  }
+
+  // ---------------------------
+  // 유효성 검증(프런트) 설정
+  // ---------------------------
+
+  /**
+   * 필드별 제약값 (DB 스키마/정책에 맞춰 조정)
+   * - supplierID: 자유형식 + 최소 6자(minLen: 6)
+   * - supplierEmail: 30자 제한
+   */
+  const VALIDATION_RULES = {
+    supplierCompanyName: { required: true, max: 20 },   // VARCHAR(20)
+    supplierID:          { required: true, minLen: 6 }, // 자유형식 + 최소 6자
+    supplierPW:          { required: false, max: 100 }, // VARCHAR(100)
+    supplierURL:         { required: false, url: true, max: 100 }, // VARCHAR(100)
+    supplierManager:     { required: false, max: 10 },  // VARCHAR(10)
+    supplierManagerRank: { required: false, max: 500 }, // VARCHAR(500)
+    supplierNumber:      { required: false },           // TEXT
+    supplierEmail:       { required: false, email: true, max: 30 } // VARCHAR(30)
+  };
+
+  /**
+   * 검증 보조 유틸: 에러/성공 상태 초기화
+   */
+  function clearErrors(formEl) {
+    $(formEl).find('.is-invalid').removeClass('is-invalid');
+    $(formEl).find('.invalid-feedback').text('');
+    $(formEl).find('.is-valid').removeClass('is-valid');
+    $(formEl).find('.valid-feedback').text('');
+  }
+
+  /**
+   * 필드 에러 표시: 부트스트랩 invalid 스타일 + 메시지
+   */
+  function showFieldError(inputEl, message) {
+    const $el = $(inputEl);
+    $el.addClass('is-invalid');
+    let fb = $el.siblings('.invalid-feedback');
+    if (fb.length === 0) {
+      fb = $('<div class="invalid-feedback"></div>');
+      $el.after(fb);
+    }
+    fb.text(message || '유효하지 않은 값입니다.');
+    $el.removeClass('is-valid');
+    $el.siblings('.valid-feedback').text('');
+  }
+
+  /**
+   * 필드 성공 표시: 텍스트 없이 초록 테두리만(is-valid)
+   */
+  function showFieldValid(inputEl) {
+    const $el = $(inputEl);
+    $el.removeClass('is-invalid');
+    $el.siblings('.invalid-feedback').text('');
+    $el.addClass('is-valid');
+    let vf = $el.siblings('.valid-feedback');
+    if (vf.length === 0) {
+      vf = $('<div class="valid-feedback"></div>');
+      $el.after(vf);
+    }
+    vf.text(''); // 성공 문구 제거(초록 표시만)
+  }
+
+  /**
+   * 간단 형식 검증 유틸 함수들
+   */
+  function isInteger(val) {
+    return /^-?\d+$/.test(val);
+  }
+  function isValidEmail(val) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  }
+  function isValidURL(val) {
+    try {
+      const href = /^(https?:)?\/\//i.test(val) ? val : 'http://' + val;
+      new URL(href);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * FormData → 평문 객체(dict) 변환(문자열은 trim)
+   */
+  function formToObject(formEl) {
+    const fd = new FormData(formEl);
+    const obj = {};
+    for (const [k, v] of fd.entries()) {
+      obj[k] = (typeof v === 'string') ? v.trim() : v;
+    }
+    return obj;
+  }
+
+  /**
+   * 단일 필드 검증(라이브)
+   * - required / max / minLen / email / url 등 규칙 적용
+   * - 통과 시 is-valid, 실패 시 is-invalid
+   */
+  function validateField(formEl, name) {
+    const rules = VALIDATION_RULES[name];
+    if (!rules) return { ok: true };
+
+    const inputEl = $(formEl).find(`[name="${name}"]`)[0];
+    const raw = (inputEl && inputEl.value ? inputEl.value.trim() : '');
+
+    if (rules.required && !raw) {
+      showFieldError(inputEl, '필수 입력 항목입니다.');
+      return { ok: false };
+    }
+    if (!raw) {
+      $(inputEl).removeClass('is-invalid is-valid');
+      $(inputEl).siblings('.invalid-feedback,.valid-feedback').text('');
+      return { ok: true };
+    }
+    if (rules.max && raw.length > rules.max) {
+      showFieldError(inputEl, `최대 ${rules.max}자까지 가능합니다. (현재 ${raw.length}자)`);
+      return { ok: false };
+    }
+    if (rules.minLen && raw.length < rules.minLen) {
+      showFieldError(inputEl, `최소 ${rules.minLen}자 이상 입력해 주세요.`);
+      return { ok: false };
+    }
+    if (rules.email && !isValidEmail(raw)) {
+      showFieldError(inputEl, '올바른 이메일 형식이 아닙니다.');
+      return { ok: false };
+    }
+    if (rules.url && !isValidURL(raw)) {
+      showFieldError(inputEl, '올바른 URL 형식이 아닙니다.');
+      return { ok: false };
+    }
+
+    // 모든 조건 통과 → 초록 성공 표시
+    showFieldValid(inputEl);
+    return { ok: true };
+  }
+
+  /**
+   * 전체 폼 검증(제출 시)
+   * - 각 필드 validateField 호출 → 하나라도 실패하면 ok=false
+   */
+  function validateSupplierForm(formEl) {
+    clearErrors(formEl);
+    const data = formToObject(formEl);
+    const errors = {};
+    Object.keys(VALIDATION_RULES).forEach((key) => {
+      const res = validateField(formEl, key);
+      if (!res.ok) errors[key] = true;
+    });
+    return { ok: Object.keys(errors).length === 0, data, errors };
+  }
+
+  /**
+   * 디바운스: 입력 중 과도한 검증 호출 방지
+   */
+  function debounce(fn, wait) {
+    let t;
+    return function(...args) {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), wait);
+    };
+  }
+
+  /**
+   * 라이브 검증 바인딩
+   */
+  const liveValidate = debounce(function(e) {
+    const form = document.getElementById('supplierForm');
+    const name = e.target.name;
+    if (!name) return;
+    validateField(form, name);
+  }, 150);
+  $(document).on('input change', '#supplierForm input', liveValidate);
+
+  /**
+   * 폼 리셋: 값 + 검증 상태 초기화
+   */
+  function resetForm() {
+    $('#supplierCompanyName').val('');
+    $('#supplierID').val('');
+    $('#supplierPW').val('');
+    $('#supplierURL').val('');
+    $('#supplierManager').val('');
+    $('#supplierManagerRank').val('');
+    $('#supplierNumber').val('');
+    $('#supplierEmail').val('');
+    clearErrors(document.getElementById('supplierForm'));
+  }
+
+  /**
+   * 등록 버튼 클릭 → 검증 → 확인(Swal) → AJAX 제출 → 성공 시 모달 닫고 리스트 재조회
+   */
+  function addSupplier() {
+    const form = document.getElementById('supplierForm');
+    const { ok } = validateSupplierForm(form);
+
+    if (!ok) {
+      Swal.fire({
+        icon: 'error',
+        title: '입력값 확인 필요',
+        text: '빨간 표시된 항목을 수정해 주세요.'
+      });
+      return;
+    }
+
+    Swal.fire({
+      title: '공급사를 등록하시겠습니까?',
+      text: "공급사 등록 후 Slack 생성 프로세스가 바로 실행됩니다.",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#3085d6',
+      cancelButtonColor: '#d33',
+      confirmButtonText: '등록',
+      cancelButtonText: '취소',
+      reverseButtons: true
+    }).then((result) => {
+      if (!result.isConfirmed) return;
+
+      const fd = new FormData(form);
+      $.ajax({
+        type: 'post',
+        url: '/supplier/ajax/addSupplier',
+        data: fd,
+        dataType: 'json',
+        processData: false,   // FormData 전송 필수
+        contentType: false,   // 브라우저가 멀티파트 헤더 자동 지정
+        cache: false,
+        success: function (res) {
+          if (res.code === 20000) {
+            alertStartHtml('success', '공급사 등록 완료', '공급사 등록이 완료되었습니다.<br>Slack 생성 프로세스가 시작됩니다.');
+            $('#addSupplierClose').click();
+            reloadSupplierTable();
+          } else {
+            alertStart('error', '공급사 등록 실패', '공급사 등록에 실패하였습니다.');
+          }
+        },
+        error: function () {
+          alertStart('error', '공급사 등록 실패', '공급사 등록에 실패하였습니다.');
+        }
+      });
+    });
+  }
+</script>
+
 <body id="page-top">
 
   <!-- Page Wrapper -->
@@ -27,10 +354,14 @@
           <div class="card shadow mb-4">
             <div class="card-header py-3 d-sm-flex align-items-center justify-content-between">
               <h6 class="m-0 font-weight-bold text-primary">공급사 리스트</h6>
-              <a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">공급사 등록</a>
+              <!-- 모달 열기: resetForm으로 값/상태 초기화 후 오픈 -->
+              <a class="d-sm-inline-block btn btn-sm btn-primary shadow-sm"
+                 href="javascript:resetForm()"
+                 data-toggle="modal" data-target="#addSupplier">공급사 등록</a>
             </div>
             <div class="card-body">
               <div class="table-responsive">
+                <!-- DataTables를 사용하는 경우 id 유지 -->
                 <table class="table table-bordered text-center" id="dataTable" width="100%" cellspacing="0">
                   <thead>
                     <tr>
@@ -48,45 +379,21 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
-                      <td>1</td>
-                      <td>Tiger Nixon</td>
-                      <td>생성완료</td>
-                      <td>Edinburgh</td>
-                      <td>61</td>
-                      <td>2011/04/25</td>
-                      <td>ㅇㅇㅇ</td>
-                      <td>대표</td>
-                      <td>010-0000-0000</td>
-                      <td>test@test.com</td>
-                      <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
-                    </tr>
-                    <tr>
-                      <td>2</td>
-                      <td>Garrett Winters</td>
-                      <td>생성완료</td>
-                      <td>Tokyo</td>
-                      <td>63</td>
-                      <td>2011/07/25</td>
-                      <td>ㅇㅇㅇ</td>
-                      <td>대표</td>
-                      <td>010-0000-0000</td>
-                      <td>test@test.com</td>
-                      <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
-                    </tr>
-                    <tr>
-                      <td>3</td>
-                      <td>Ashton Cox</td>
-                      <td>생성완료</td>
-                      <td>San Francisco</td>
-                      <td>66</td>
-                      <td>2009/01/12</td>
-                      <td>ㅇㅇㅇ</td>
-                      <td>대표</td>
-                      <td>010-0000-0000</td>
-                      <td>test@test.com</td>
-                      <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
-                    </tr>
+                    {% for supplier in supplierList %}
+                      <tr>
+                        <td>{{ supplier.seq }}</td>
+                        <td>{{ supplier.companyName }}</td>
+                        <td>{{ supplier.stateCode }}</td>
+                        <td>{{ supplier.supplierID }}</td>
+                        <td>{{ supplier.supplierPW }}</td>
+                        <td>{{ supplier.supplierURL }}</td>
+                        <td>{{ supplier.manager }}</td>
+                        <td>{{ supplier.managerRank }}</td>
+                        <td>{{ supplier.number }}</td>
+                        <td>{{ supplier.email }}</td>
+                        <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm">수정</a></td>
+                      </tr>
+                    {% endfor %}
                   </tbody>
                 </table>
               </div>
@@ -113,6 +420,97 @@
   <a class="scroll-to-top rounded" href="#page-top">
     <i class="fas fa-angle-up"></i>
   </a>
+
+  <!-- 등록 모달 -->
+  <div class="modal fade" id="addSupplier" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel"
+       aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+        <!-- 모달 헤더 -->
+        <div class="modal-header">
+          <h5 class="modal-title" id="exampleModalLabel">공급사 등록</h5>
+          <button class="close" type="button" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+
+        <!-- 모달 바디: 입력 폼 -->
+        <div class="modal-body">
+          <form class="supplierForm" id="supplierForm" novalidate>
+            <!-- 회사명: 필수, 최대 20자 -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierCompanyName" name="supplierCompanyName"
+                     placeholder="회사명" maxlength="20" required>
+              <div class="invalid-feedback">회사명은 필수이며 최대 20자입니다.</div>
+            </div>
+
+            <!-- 공급사 ID: 자유형식 + 최소 6자 (숫자 제한 제거) -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierID" name="supplierID"
+                     placeholder="공급사 ID(최소 6자)" minlength="6" required>
+              <div class="invalid-feedback">공급사 ID는 최소 6자 이상 입력해 주세요.</div>
+            </div>
+
+            <!-- 공급사 PW: 선택, 최대 100자 -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierPW" name="supplierPW"
+                     placeholder="공급사 PW" maxlength="100">
+              <div class="invalid-feedback">PW는 최대 100자입니다.</div>
+            </div>
+
+            <!-- 자사몰 URL: 선택, 최대 100자 -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierURL" name="supplierURL"
+                     placeholder="자사몰 URL" maxlength="100">
+              <div class="invalid-feedback">올바른 URL 형식이 아닙니다.</div>
+            </div>
+
+            <!-- 담당자명: 선택, 최대 10자 -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierManager" name="supplierManager"
+                     placeholder="담당자명" maxlength="10">
+              <div class="invalid-feedback">담당자명은 최대 10자입니다.</div>
+            </div>
+
+            <!-- 직책: 선택, 최대 500자 -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierManagerRank" name="supplierManagerRank"
+                     placeholder="직책" maxlength="500">
+              <div class="invalid-feedback">직책은 최대 500자입니다.</div>
+            </div>
+
+            <!-- 연락처: 선택, 자유형식 -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierNumber" name="supplierNumber"
+                     placeholder="연락처">
+              <div class="invalid-feedback">유효한 연락처를 입력해 주세요.</div>
+            </div>
+
+            <!-- 이메일: 선택, 최대 30자 -->
+            <div class="form-group">
+              <input type="email" class="form-control form-control-user"
+                     id="supplierEmail" name="supplierEmail"
+                     placeholder="이메일" maxlength="30">
+              <div class="invalid-feedback">올바른 이메일 형식이 아닙니다.</div>
+            </div>
+          </form>
+        </div>
+
+        <!-- 모달 푸터: 버튼 -->
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="addSupplierClose" type="button" data-dismiss="modal">취소</button>
+          <a class="btn btn-primary" href="javascript:addSupplier()">등록</a>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Footer-->
   {% include './common/footer.html' %}
