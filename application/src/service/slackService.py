@@ -258,12 +258,9 @@ def _send_broadcast_to_common_channel(created_channel_id: str, created_channel_n
 
   def _safe(v): return v if (v and str(v).strip()) else "-"
   text = SLACK_BROADCAST_TEMPLATE.format(
-    company=_safe(supplier.companyName),
-    supplier_id=_safe(supplier.supplierID),
     manager=_safe(supplier.manager),
     number=_safe(supplier.number),
     email=_safe(supplier.email),
-    channel_name=created_channel_name or "-",
     channel_mention=f"<#{created_channel_id}>",
   )
 

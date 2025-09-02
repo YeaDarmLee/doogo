@@ -1,38 +1,52 @@
+# application/src/repositories/SupplierListRepository.py
+from typing import Optional
+from sqlalchemy import select, update
 from application.src.models import db
 from application.src.models.SupplierList import SupplierList
-from sqlalchemy import select
 
 class SupplierListRepository:
-  """
-  공급사 정보 테이블 (SUPPLIER_LIST)의 CRUD 처리를 위한 Repository 클래스
-  """
-
   @staticmethod
   def findAll():
     stmt = select(SupplierList)
-    result = db.session.execute(stmt).scalars().all()
-    return result
+    return db.session.execute(stmt).scalars().all()
 
   @staticmethod
-  def findBySeq(seq: int):
+  def findBySeq(seq: int) -> Optional[SupplierList]:
     stmt = select(SupplierList).where(SupplierList.seq == seq)
-    result = db.session.execute(stmt).scalar_one_or_none()
-    return result
+    return db.session.execute(stmt).scalar_one_or_none()
 
   @staticmethod
-  def findByCompanyName(company_name: str):
-    stmt = select(SupplierList).where(SupplierList.companyName == company_name)
-    result = db.session.execute(stmt).scalar_one_or_none()
-    return result
-
-  @staticmethod
-  def save(supplier: SupplierList):
-    if not supplier.seq:
-      db.session.add(supplier)
+  def save(entity: SupplierList) -> SupplierList:
+    if not entity.seq:
+      db.session.add(entity)
     db.session.commit()
-    return supplier
+    return entity
 
+  # ▶ 채널ID + 상태코드 동시 업데이트
   @staticmethod
-  def delete(supplier: SupplierList):
-    db.session.delete(supplier)
+  def update_channel_and_state(seq: int, channel_id: str, state_code: Optional[str] = None) -> None:
+    values = {"channelId": channel_id}
+    if state_code is not None:
+      values["stateCode"] = state_code
+    db.session.execute(
+      update(SupplierList)
+      .where(SupplierList.seq == seq)
+      .values(**values)
+    )
     db.session.commit()
+
+  # ▶ 상태코드만 업데이트 (실패표시 등)
+  @staticmethod
+  def update_state(seq: int, state_code: str) -> None:
+    db.session.execute(
+      update(SupplierList)
+      .where(SupplierList.seq == seq)
+      .values(stateCode=state_code)
+    )
+    db.session.commit()
+
+  # ▶ 대기/미생성 건 조회(예: NULL 또는 특정 코드)
+  @staticmethod
+  def find_pending(limit: int = 100):
+    stmt = select(SupplierList).where(SupplierList.stateCode.is_(None)).limit(limit)
+    return db.session.execute(stmt).scalars().all()
