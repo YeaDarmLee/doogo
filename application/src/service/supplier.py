@@ -10,8 +10,26 @@ supplier = Blueprint("supplier", __name__, url_prefix="/supplier")
 # -----------------------------------
 @supplier.route("/", methods=["GET"])
 def index():
-  supplier_list = SupplierListRepository.findAll()
-  return render_template("supplier.html", pageName="supplier", supplierList=supplier_list)
+  items = SupplierListRepository.findAll()
+
+  def to_dict(x: SupplierList) -> dict:
+    return {
+      "seq": x.seq,
+      "companyName": x.companyName or "",
+      "supplierCode": x.supplierCode or "",
+      "stateCode": getattr(x, "stateCode", "") or "",
+      "channelId": x.channelId or "",
+      "contractStatus": x.contractStatus or "",
+      "supplierID": x.supplierID or "",
+      "supplierPW": x.supplierPW or "",
+      "supplierURL": x.supplierURL or "",
+      "manager": x.manager or "",
+      "managerRank": x.managerRank or "",
+      "number": x.number or "",
+      "email": x.email or ""
+    }
+
+  return render_template("supplier.html", pageName="supplier", supplierList=[to_dict(s) for s in items])
 
 # -----------------------------------
 # Ajax: 등록
@@ -26,6 +44,7 @@ def addSupplier():
       return v.strip() if isinstance(v, str) else v
 
     company_name = g("supplierCompanyName") or ""
+    supplier_code = g("supplierCode") or ""
     supplier_id  = g("supplierID") or ""   # 자유형식 + 최소 6자
     supplier_pw  = g("supplierPW") or None
     supplier_url = g("supplierURL") or None
@@ -45,6 +64,7 @@ def addSupplier():
 
     s = SupplierList(
       companyName=company_name,
+      supplierCode=supplier_code,
       supplierID=supplier_id,
       supplierPW=supplier_pw,
       supplierURL=supplier_url,
@@ -76,6 +96,7 @@ def getSupplier(seq: int):
     return {
       "seq": x.seq,
       "companyName": x.companyName or "",
+      "supplierCode": x.supplierCode or "",
       "supplierID": x.supplierID or "",
       "supplierPW": "",  # 보안상 미노출
       "supplierURL": x.supplierURL or "",
@@ -113,6 +134,7 @@ def updateSupplier():
       return jsonify({"code": 40900, "message": "다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요."}), 409
 
     company_name = g("companyName") or ""
+    supplier_code = g("supplierCode") or ""
     supplier_id  = g("supplierID") or ""      # 자유형식 + 최소 6자
     supplier_pw  = g("supplierPW")            # 공란이면 변경하지 않음
     supplier_url = g("supplierURL") or None
@@ -132,6 +154,7 @@ def updateSupplier():
 
     # 반영 (PW는 공란이면 유지)
     s.companyName = company_name
+    s.supplierCode = supplier_code
     s.supplierID  = supplier_id
     if supplier_pw is not None and supplier_pw != "":
       s.supplierPW = supplier_pw
@@ -163,7 +186,10 @@ def listSuppliers():
     return {
       "seq": x.seq,
       "companyName": x.companyName or "",
+      "supplierCode": x.supplierCode or "",
       "stateCode": getattr(x, "stateCode", "") or "",
+      "channelId": x.channelId or "",
+      "contractStatus": x.contractStatus or "",
       "supplierID": x.supplierID or "",
       "supplierPW": x.supplierPW or "",
       "supplierURL": x.supplierURL or "",

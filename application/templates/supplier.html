@@ -50,6 +50,7 @@
   // - supplierEmail: 30자 제한
   const VALIDATION_RULES = {
     supplierCompanyName: { required: true, max: 20 },   // VARCHAR(20)
+    supplierCode:        { required: true, max: 20 },   // VARCHAR(20)
     supplierID:          { required: true, minLen: 6 }, // 자유형식 + 최소 6자
     supplierPW:          { required: false, max: 100 }, // VARCHAR(100)
     supplierURL:         { required: false, url: true, max: 100 }, // VARCHAR(100)
@@ -194,6 +195,7 @@
       const rows = list.map(s => ([
         s.seq,
         s.companyName,
+        s.supplierCode,
         s.stateCode || '',
         s.channelId || '',
         s.contractStatus || '',
@@ -218,6 +220,7 @@
           <tr data-seq="${s.seq}">
             <td>${s.seq}</td>
             <td>${escapeHtml(s.companyName)}</td>
+            <td>${escapeHtml(s.supplierCode)}</td>
             <td>${escapeHtml(s.stateCode || '')}</td>
             <td>${escapeHtml(s.channelId || '')}</td>
             <td>${escapeHtml(s.contractStatus || '')}</td>
@@ -244,6 +247,7 @@
   // 등록 폼 리셋
   function resetForm() {
     $('#supplierCompanyName').val('');
+    $('#supplierCode').val('');
     $('#supplierID').val('');
     $('#supplierPW').val('');
     $('#supplierURL').val('');
@@ -343,6 +347,7 @@
       f.seq.value = res.item.seq;
       f.updatedAt.value = res.item.updatedAt || '';
       f.companyName.value = res.item.companyName || '';
+      f.supplierCode.value = res.item.supplierCode || '';
       f.supplierID.value = res.item.supplierID || '';
       f.supplierPW.value = '';
       f.supplierURL.value = res.item.supplierURL || '';
@@ -366,6 +371,7 @@
 
     const map = {
       companyName: 'supplierCompanyName',
+      supplierCode: 'supplierCode',
       supplierID: 'supplierID',
       supplierPW: 'supplierPW',
       supplierURL: 'supplierURL',
@@ -409,11 +415,12 @@
     const ok = (function validateEdit() {
       clearErrors(f);
       const names = [
-        'companyName', 'supplierID', 'supplierPW',
+        'companyName', 'supplierCode', 'supplierID', 'supplierPW',
         'supplierURL', 'manager', 'managerRank', 'number', 'email'
       ];
       const bridge = {
         companyName: 'supplierCompanyName',
+        supplierCode: 'supplierCode',
         supplierID: 'supplierID',
         supplierPW: 'supplierPW',
         supplierURL: 'supplierURL',
@@ -464,6 +471,7 @@
       seq: f.seq.value,
       updatedAt: f.updatedAt.value, // 낙관적 잠금
       companyName: f.companyName.value.trim(),
+      supplierCode: f.supplierCode.value.trim(),
       supplierID: f.supplierID.value.trim(),
       supplierPW: f.supplierPW.value.trim(), // 공란이면 서버에서 무시
       supplierURL: f.supplierURL.value.trim(),
@@ -546,6 +554,7 @@
                     <tr>
                       <th>SEQ</th>
                       <th>회사명</th>
+                      <th>CAFE24 코드</th>
                       <th>Slack 연동</th>
                       <th>Slack ID</th>
                       <th>계약서 작성여부</th>
@@ -564,6 +573,7 @@
                       <tr data-seq="{{ supplier.seq }}">
                         <td>{{ supplier.seq }}</td>
                         <td>{{ supplier.companyName }}</td>
+                        <td>{{ supplier.supplierCode }}</td>
                         <td>{{ supplier.stateCode }}</td>
                         <td>{{ supplier.channelId }}</td>
                         <td>{{ supplier.contractStatus }}</td>
@@ -628,6 +638,14 @@
                      id="supplierCompanyName" name="supplierCompanyName"
                      placeholder="회사명" maxlength="20" required>
               <div class="invalid-feedback">회사명은 필수이며 최대 20자입니다.</div>
+            </div>
+
+            <!-- Cafe24 코드: 필수, 최대 20자 -->
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="supplierCode" name="supplierCode"
+                     placeholder="CAFE24 코드" maxlength="20" required>
+              <div class="invalid-feedback">Cafe24 코드는 필수이며 최대 20자입니다.</div>
             </div>
 
             <!-- 공급사 ID: 자유형식 + 최소 6자 -->
@@ -717,6 +735,12 @@
             <div class="form-group">
               <input type="text" class="form-control" name="companyName" placeholder="회사명" maxlength="20" required>
               <div class="invalid-feedback">회사명은 필수이며 최대 20자입니다.</div>
+            </div>
+
+            <!-- CAFE24 코드 -->
+            <div class="form-group">
+              <input type="text" class="form-control" name="supplierCode" placeholder="CAFE24 코드" maxlength="20" required>
+              <div class="invalid-feedback">CAFE24 코드는 필수이며 최대 20자입니다.</div>
             </div>
 
             <!-- 공급사 ID -->

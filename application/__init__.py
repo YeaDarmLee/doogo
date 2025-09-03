@@ -33,3 +33,6 @@ from .src.service.supplier import supplier
 app.register_blueprint(main)
 app.register_blueprint(login)
 app.register_blueprint(supplier)
+
+from .controllers.cafe24_webhooks import cafe24
+app.register_blueprint(cafe24)
