@@ -345,3 +345,31 @@ def create_slack_channel_only(supplier: SupplierList) -> Dict[str, Any]:
   _send_broadcast_to_common_channel(channel_id, channel.get("name") or channel_name, supplier)
 
   return {"ok": True, "channel_id": channel_id, "channel_name": channel_name}
+
+# ========= 단일 메시지 전송(공용) =========
+def post_message_to_channel(channel_id: str, text: str, thread_ts: Optional[str] = None) -> Dict[str, Any]:
+  """
+  지정 채널로 텍스트 메시지 전송
+  - 레이트리밋(429) 자동 재시도 1회
+  - 실패 시 예외는 던지지 않고 dict 로 반환(호출부에서 판단)
+  """
+  if not channel_id or not text:
+    logger.error("[post-msg] invalid args channel_id/text")
+    return {"ok": False, "error": "invalid_args"}
+
+  for attempt in range(2):
+    try:
+      resp = client.chat_postMessage(
+        channel=channel_id,
+        text=text,
+        **({"thread_ts": thread_ts} if thread_ts else {})
+      )
+      logger.info(f"[post-msg-ok] ch={channel_id}")
+      return {"ok": True, "data": resp.data}
+    except SlackApiError as e:
+      if _sleep_if_rate_limited(e):
+        continue
+      data = getattr(e, "response", None)
+      data = getattr(data, "data", None) if data else None
+      logger.error(f"[post-msg-fail] ch={channel_id} err={data}")
+      return {"ok": False, "error": (data.get('error') if isinstance(data, dict) else str(e))}
