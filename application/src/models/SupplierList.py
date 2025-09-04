@@ -49,6 +49,9 @@ class SupplierList(db.Model):
   
   # 계약서 상태 (NULL 가능)
   contractStatus: Mapped[Optional[str]] = mapped_column("CONTRACT_STATUS", db.String(4), nullable=True, comment="계약서 상태")
+  
+  # 계약서 ID (NULL 가능)
+  contractId: Mapped[Optional[str]] = mapped_column("CONTRACT_ID", db.String(100), nullable=True, comment="계약서 ID")
 
   # 등록일 (기본값: 현재 시간)
   createdAt: Mapped[datetime] = mapped_column(

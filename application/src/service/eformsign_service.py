@@ -34,6 +34,16 @@ class TokenResponse:
       return None
     return self.issued_at_ms + (self.expires_in * 1000)
 
+def _get_in(obj: Any, path: List[str], default=None):
+  cur = obj
+  for k in path:
+    if not isinstance(cur, dict):
+      return default
+    cur = cur.get(k)
+    if cur is None:
+      return default
+  return cur
+
 class EformsignService:
   """
   - 토큰 발급: POST https://service.eformsign.com/v2.0/api_auth/access_token
@@ -52,14 +62,14 @@ class EformsignService:
     member_id: Optional[str] = None,
     timeout: Optional[float] = None,
   ):
-    # token 발급용 고정 base_url
+    # token 발급용 base_url (고정 도메인)
     self.base_url = (base_url or os.getenv("EFORMSIGN_BASE_URL") or "https://service.eformsign.com/v2.0").rstrip("/")
     self.api_key = api_key or os.getenv("EFORMSIGN_API_KEY") or ""
     self.signature_bearer = signature_bearer or os.getenv("EFORMSIGN_SIGNATURE_BEARER") or ""
     self.member_id = member_id or os.getenv("EFORMSIGN_MEMBER_ID") or ""
     self.timeout = timeout or float(os.getenv("EFORMSIGN_TIMEOUT", "15"))
 
-    # 문서 전송 기본값
+    # 문서 전송 기본값 (ENV로 커스터마이즈)
     self.default_template_id = os.getenv("EFORMSIGN_TEMPLATE_ID") or ""
     self.default_document_name = os.getenv("EFORMSIGN_DOC_NAME", "공급사 계약서")
     self.default_comment = os.getenv("EFORMSIGN_DOC_COMMENT", "계약서 확인 및 작성 부탁드립니다.")
@@ -85,14 +95,14 @@ class EformsignService:
     return {
       "Authorization": f"Bearer {self._b64(self.api_key)}",
       "eformsign_signature": f"Bearer {self.signature_bearer}",
-      "Content-Type": "application/json",
+      "Content-Type": "application/json; charset=UTF-8",
     }
 
   @staticmethod
   def _bearer_headers(access_token: str) -> Dict[str, str]:
     return {
       "Authorization": f"Bearer {access_token}",
-      "Content-Type": "application/json",
+      "Content-Type": "application/json; charset=UTF-8",
     }
 
   # ---- token
@@ -105,7 +115,7 @@ class EformsignService:
     }
 
     try:
-      resp = requests.post(url, headers=self._token_headers(), data=json.dumps(body), timeout=self.timeout)
+      resp = requests.post(url, headers=self._token_headers(), json=body, timeout=self.timeout)
     except requests.RequestException as e:
       raise EformsignError(f"HTTP request failed: {e}") from e
 
@@ -184,27 +194,38 @@ class EformsignService:
         "comment": comment or self.default_comment,
         "recipients": [
           {
-            "step_type": "05",           # Quickstart 예시 값
+            "step_type": "05",           # Quickstart 기준 수신자 단계 예시
             "use_mail": True,
-            "use_sms": False,
+            "use_sms": bool(use_sms),
             "member": {
               "name": recipient_name,
-              "id": recipient_email
+              "id": recipient_email,
+              "sms": {
+                "country_code": "+82",
+                "phone_number": ""
+              }
             },
             "auth": {
-              "valid": { "day": int(valid_days or self.default_valid_days), "hour": 0 }
+              **({"password": password} if password else {}),
+              "valid": {
+                "day": int(valid_days or self.default_valid_days),
+                "hour": 0
+              }
             }
           }
-        ]
-        # fields/select_group_name/notification 은 일단 생략
+        ],
+        "fields": fields or [],
+        "select_group_name": "",
+        "notification": []
       }
     }
+
     try:
       resp = requests.post(
         url,
         headers=self._bearer_headers(token.access_token),
         params=params,
-        json=body,
+        json=body,  # ← JSON 인코딩 안전
         timeout=self.timeout,
       )
     except requests.RequestException as e:
@@ -222,7 +243,28 @@ class EformsignService:
     except ValueError:
       raise EformsignError("Invalid JSON response from eformsign", status=resp.status_code, payload={"text": resp.text})
 
-    log.info(f"[eformsign] document created template_id={tid} recipient={recipient_email}")
+    # 다양한 응답 포맷에서 문서 ID 추출
+    possible_paths = [
+      ["document", "id"],
+      ["document", "document_id"],
+      ["documentId"],
+      ["id"],
+      ["document_id"],
+      ["result", "document_id"],
+      ["result", "id"],
+    ]
+    doc_id = None
+    for p in possible_paths:
+      v = _get_in(data, p)
+      if v:
+        doc_id = v
+        break
+
+    # 호출부 편의: 정규화 키(document_id)를 보정
+    if isinstance(data, dict):
+      data.setdefault("document_id", doc_id)
+
+    log.info(f"[eformsign] document created template_id={tid} recipient={recipient_email} document_id={doc_id or '(unknown)'}")
     return data
 
 # ---- optional CLI test

@@ -85,18 +85,32 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
   finally:
     _release_lock(lock_key)
 
-# jobs/supplierJobs.py (사용자가 보내준 파일의 동일 위치 가정)
 def _after_slack_success(supplier: SupplierList):
   """
   슬랙 성공 후 자동 계약서 발송.
-  1) 이폼사인 액세스 토큰 발급
-  2) 템플릿 문서를 supplier.email 로 전송
+  contractStatus 흐름:
+    - P: 전송 준비 (토큰 발급/전송 시도 직전)
+    - A: 전송 성공(문서 생성 성공)
+    - E: 실패(이메일 없음/토큰·문서 오류 등)
   """
   try:
     from application.src.service.eformsign_service import EformsignService, EformsignError
   except Exception as e:
+    supplier.contractStatus = 'E'
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()
     print(f"[{datetime.now()}] eformsign 모듈 임포트 실패 seq={supplier.seq} err={e}")
     return
+
+  # 1) 전송대기(P)로 세팅
+  try:
+    supplier.contractStatus = 'P'
+    db.session.commit()
+  except Exception:
+    db.session.rollback()
+    print(f"[{datetime.now()}] 계약 상태(P) 저장 실패 seq={supplier.seq}")
 
   try:
     svc = EformsignService()
@@ -106,27 +120,41 @@ def _after_slack_success(supplier: SupplierList):
       f"seq={supplier.seq} company={supplier.companyName} api_url={tr.api_url} expires_in={tr.expires_in}"
     )
 
-    # 공급사 이메일/회사명 기준으로 문서 전송
     recipient_email = (supplier.email or "").strip()
     recipient_name = (supplier.companyName or "공급사 담당자").strip()
     if not recipient_email:
-      print(f"[{datetime.now()}] eformsign 전송 스킵: supplier.email 이 비어있음 seq={supplier.seq}")
+      supplier.contractStatus = 'E'
+      try:
+        db.session.commit()
+      except Exception:
+        db.session.rollback()
+      print(f"[{datetime.now()}] eformsign 전송 스킵(이메일 없음) seq={supplier.seq}")
       return tr
 
     doc = svc.create_document_from_template(
       token=tr,
-      template_id=os.getenv("EFORMSIGN_TEMPLATE_ID"),  # 없으면 svc.default_template_id 사용
+      template_id=os.getenv("EFORMSIGN_TEMPLATE_ID"),
       recipient_name=recipient_name,
       recipient_email=recipient_email,
-      # document_name/comment/fields/password 등 필요 시 인자 또는 ENV 로 제어
-      fields=[],  # 예: [{"id":"사업자등록번호","value": supplier.bizNo or ""}]
+      fields=[],
     )
 
-    doc_id = (doc.get("document_id") or doc.get("id") or "(unknown)")
+    doc_id = doc.get("document_id") or None
     print(
       f"[{datetime.now()}] eformsign 문서 전송 성공 seq={supplier.seq} company={supplier.companyName} "
-      f"recipient={recipient_email} document_id={doc_id}"
+      f"recipient={recipient_email} document_id={doc_id or '(unknown)'}"
     )
+
+    # 2) 전송 성공(A) + 계약서 ID 저장
+    supplier.contractStatus = 'A'
+    if doc_id:                     # 문서 ID가 파싱되면 저장
+      supplier.contractId = doc_id
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()
+      print(f"[{datetime.now()}] 계약 상태/ID 저장 실패 seq={supplier.seq}")
+
     return tr
 
   except EformsignError as e:
@@ -136,5 +164,16 @@ def _after_slack_success(supplier: SupplierList):
       f"[{datetime.now()}] eformsign 처리 실패 "
       f"(토큰/문서) seq={supplier.seq} company={supplier.companyName} status={status} payload={payload}"
     )
+    supplier.contractStatus = 'E'
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()
+
   except Exception as e:
     print(f"[{datetime.now()}] eformsign 처리 실패(예상치 못한 오류) seq={supplier.seq} err={e}")
+    supplier.contractStatus = 'E'
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()

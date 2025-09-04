@@ -33,3 +33,6 @@ from .src.service.supplier import supplier
 app.register_blueprint(main)
 app.register_blueprint(login)
 app.register_blueprint(supplier)
+
+from application.controllers.eformsign_webhook import eformsign_webhook
+app.register_blueprint(eformsign_webhook)
