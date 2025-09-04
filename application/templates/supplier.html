@@ -197,7 +197,6 @@
         s.companyName,
         s.supplierCode,
         s.stateCode || '',
-        s.channelId || '',
         s.contractStatus || '',
         s.supplierID,
         s.supplierPW,
@@ -222,7 +221,6 @@
             <td>${escapeHtml(s.companyName)}</td>
             <td>${escapeHtml(s.supplierCode)}</td>
             <td>${escapeHtml(s.stateCode || '')}</td>
-            <td>${escapeHtml(s.channelId || '')}</td>
             <td>${escapeHtml(s.contractStatus || '')}</td>
             <td>${escapeHtml(s.supplierID)}</td>
             <td>${escapeHtml(s.supplierPW)}</td>
@@ -555,8 +553,7 @@
                       <th>SEQ</th>
                       <th>회사명</th>
                       <th>CAFE24 코드</th>
-                      <th>Slack 연동</th>
-                      <th>Slack ID</th>
+                      <th>Slack</th>
                       <th>계약서 작성여부</th>
                       <th>공급사 ID</th>
                       <th>공급사 PW</th>
@@ -575,7 +572,6 @@
                         <td>{{ supplier.companyName }}</td>
                         <td>{{ supplier.supplierCode }}</td>
                         <td>{{ supplier.stateCode }}</td>
-                        <td>{{ supplier.channelId }}</td>
                         <td>{{ supplier.contractStatus }}</td>
                         <td>{{ supplier.supplierID }}</td>
                         <td>{{ supplier.supplierPW }}</td>
