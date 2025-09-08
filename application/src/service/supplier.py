@@ -12,7 +12,7 @@ supplier = Blueprint("supplier", __name__, url_prefix="/supplier")
 def index():
   items = SupplierListRepository.findAll()
 
-  def to_dict(x: SupplierList) -> dict:
+  def to_Dict(x: SupplierList) -> dict:
     return {
       "seq": x.seq,
       "companyName": x.companyName or "",
@@ -29,7 +29,7 @@ def index():
       "email": x.email or ""
     }
 
-  return render_template("supplier.html", pageName="supplier", supplierList=[to_dict(s) for s in items])
+  return render_template("supplier.html", pageName="supplier", supplierList=[to_Dict(s) for s in items])
 
 # -----------------------------------
 # Ajax: 등록
@@ -78,7 +78,7 @@ def addSupplier():
 
   except SQLAlchemyError as e:
     SupplierListRepository.rollback_if_needed()
-    return jsonify({"code": 50001, "message": "DB 오류", "detail": str(e.__dict__.get('orig') or e)}), 500
+    return jsonify({"code": 50001, "message": "DB 오류", "detail": str(e.__Dict__.get('orig') or e)}), 500
   except Exception as e:
     SupplierListRepository.rollback_if_needed()
     return jsonify({"code": 50000, "message": "예외 발생", "detail": str(e)}), 500
@@ -92,7 +92,7 @@ def getSupplier(seq: int):
   if not s:
     return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
 
-  def to_dict(x: SupplierList) -> dict:
+  def to_Dict(x: SupplierList) -> dict:
     return {
       "seq": x.seq,
       "companyName": x.companyName or "",
@@ -108,7 +108,7 @@ def getSupplier(seq: int):
       "updatedAt": x.updatedAt.isoformat() if getattr(x, "updatedAt", None) else None
     }
 
-  return jsonify({"code": 20000, "item": to_dict(s)})
+  return jsonify({"code": 20000, "item": to_Dict(s)})
 
 # -----------------------------------
 # Ajax: 수정(낙관적 잠금)
@@ -170,7 +170,7 @@ def updateSupplier():
 
   except SQLAlchemyError as e:
     SupplierListRepository.rollback_if_needed()
-    return jsonify({"code": 50001, "message": "DB 오류", "detail": str(e.__dict__.get('orig') or e)}), 500
+    return jsonify({"code": 50001, "message": "DB 오류", "detail": str(e.__Dict__.get('orig') or e)}), 500
   except Exception as e:
     SupplierListRepository.rollback_if_needed()
     return jsonify({"code": 50000, "message": "예외 발생", "detail": str(e)}), 500
@@ -182,7 +182,7 @@ def updateSupplier():
 def listSuppliers():
   items = SupplierListRepository.findAll()
 
-  def to_dict(x: SupplierList) -> dict:
+  def to_Dict(x: SupplierList) -> dict:
     return {
       "seq": x.seq,
       "companyName": x.companyName or "",
@@ -199,4 +199,4 @@ def listSuppliers():
       "email": x.email or ""
     }
 
-  return jsonify({"code": 20000, "supplierList": [to_dict(s) for s in items]})
+  return jsonify({"code": 20000, "supplierList": [to_Dict(s) for s in items]})

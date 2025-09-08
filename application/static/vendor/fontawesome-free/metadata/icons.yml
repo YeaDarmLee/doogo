@@ -17470,7 +17470,7 @@ spell-check:
   label: Spell Check
   search:
     terms:
-      - dictionary
+      - Dictionary
       - edit
       - editor
       - grammar

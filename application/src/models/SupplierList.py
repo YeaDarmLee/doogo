@@ -21,10 +21,10 @@ class SupplierList(db.Model):
   supplierCode: Mapped[Optional[str]] = mapped_column("SUPPLIER_CODE", db.String(50), nullable=True, unique=True, comment="CAFE24 공급사 코드")
 
   # 공급사 ID (NULL 불가능)
-  supplierID: Mapped[Optional[str]] = mapped_column("SUPPLIER_ID", db.Integer, nullable=False, comment="공급사 ID")
+  supplierID: Mapped[Optional[str]] = mapped_column("SUPPLIER_ID", db.Integer, nullable=True, comment="공급사 ID")
 
   # 공급사 PW (NULL 불가능)
-  supplierPW: Mapped[Optional[str]] = mapped_column("SUPPLIER_PW", db.String(100), nullable=False, comment="공급사 PW")
+  supplierPW: Mapped[Optional[str]] = mapped_column("SUPPLIER_PW", db.String(100), nullable=True, comment="공급사 PW")
 
   # 공급사 URL (NULL 가능)
   supplierURL: Mapped[Optional[str]] = mapped_column("SUPPLIER_URL", db.String(100), nullable=True, comment="공급사 URL")

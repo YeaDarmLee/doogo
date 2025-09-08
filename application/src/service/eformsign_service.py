@@ -37,7 +37,7 @@ class TokenResponse:
 def _get_in(obj: Any, path: List[str], default=None):
   cur = obj
   for k in path:
-    if not isinstance(cur, dict):
+    if not isinstance(cur, Dict):
       return default
     cur = cur.get(k)
     if cur is None:
@@ -134,7 +134,7 @@ class EformsignService:
     # 포맷 A/B 모두 대응
     oauth = data.get("oauth_token") or {}
     api_key_obj = data.get("api_key") or {}
-    company = (api_key_obj.get("company") or {}) if isinstance(api_key_obj, dict) else {}
+    company = (api_key_obj.get("company") or {}) if isinstance(api_key_obj, Dict) else {}
 
     access_token = data.get("access_token") or oauth.get("access_token")
     refresh_token = data.get("refresh_token") or oauth.get("refresh_token")
@@ -142,7 +142,7 @@ class EformsignService:
     api_url = data.get("api_url") or company.get("api_url")
 
     if not access_token:
-      keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+      keys = list(data.keys()) if isinstance(data, Dict) else type(data).__name__
       raise EformsignError(
         f"Response missing access_token (keys={keys})",
         status=resp.status_code,
@@ -261,7 +261,7 @@ class EformsignService:
         break
 
     # 호출부 편의: 정규화 키(document_id)를 보정
-    if isinstance(data, dict):
+    if isinstance(data, Dict):
       data.setdefault("document_id", doc_id)
 
     log.info(f"[eformsign] document created template_id={tid} recipient={recipient_email} document_id={doc_id or '(unknown)'}")

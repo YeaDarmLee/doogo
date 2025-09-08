@@ -50,3 +50,9 @@ class SupplierListRepository:
   def find_pending(limit: int = 100):
     stmt = select(SupplierList).where(SupplierList.stateCode.is_(None)).limit(limit)
     return db.session.execute(stmt).scalars().all()
+  
+  @staticmethod
+  def findBySupplierCode(supplier_code: str) -> Optional[SupplierList]:
+    stmt = select(SupplierList).where(SupplierList.supplierCode == supplier_code)
+    return db.session.execute(stmt).scalar_one_or_none()
+  

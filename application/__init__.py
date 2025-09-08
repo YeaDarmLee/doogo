@@ -36,3 +36,6 @@ app.register_blueprint(supplier)
 
 from application.controllers.eformsign_webhook import eformsign_webhook
 app.register_blueprint(eformsign_webhook)
+
+from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
+app.register_blueprint(cafe24_webhooks_bp)

@@ -64,7 +64,7 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
         resp = getattr(e, "response", None)
         status = getattr(resp, "status_code", None)
         data = getattr(resp, "data", None)
-        err_code = (data.get("error") if isinstance(data, dict) else None)
+        err_code = (data.get("error") if isinstance(data, Dict) else None)
         s.stateCode = 'E'
         db.session.commit()
         print(

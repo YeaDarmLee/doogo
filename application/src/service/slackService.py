@@ -119,17 +119,9 @@ def _send_welcome_message(channel_id: str, supplier: SupplierList):
     supplier_pw=_safe(supplier.supplierPW)
   )
 
-  mention_prefix = ""
-  if SLACK_WELCOME_MENTION_ADMINS:
-    admin_ids = _collect_admin_user_ids()
-    if admin_ids:
-      mention_prefix = " ".join(f"<@{uid}>" for uid in admin_ids) + " "
-
-  final_text = mention_prefix + text
-
   for attempt in range(2):
     try:
-      client.chat_postMessage(channel=channel_id, text=final_text)
+      client.chat_postMessage(channel=channel_id, text=text)
       logger.info(f"[welcome-ok] ch={channel_id}")
       return
     except SlackApiError as e:
@@ -164,7 +156,7 @@ def _resolve_channel_id_by_name(name: str) -> Optional[str]:
       break
   return None
 
-def _channel_info(channel_id: str) -> Optional[dict]:
+def _channel_info(channel_id: str) -> Optional[Dict]:
   try:
     info = client.conversations_info(channel=channel_id)
     return info.get("channel", {})
@@ -172,7 +164,7 @@ def _channel_info(channel_id: str) -> Optional[dict]:
     resp = getattr(e, "response", None)
     status = getattr(resp, "status_code", None)
     data = getattr(resp, "data", None)
-    err_code = (data.get("error") if isinstance(data, dict) else None)
+    err_code = (data.get("error") if isinstance(data, Dict) else None)
     logger.error(
       f"[broadcast-info-fail] ch={channel_id} "
       f"status={status} error={err_code} data={data}"
@@ -197,7 +189,7 @@ def _ensure_can_post(channel_id: str):
       resp = getattr(e, "response", None)
       status = getattr(resp, "status_code", None)
       data = getattr(resp, "data", None)
-      err_code = (data.get("error") if isinstance(data, dict) else None)
+      err_code = (data.get("error") if isinstance(data, Dict) else None)
       logger.info(
         f"[broadcast-join-skip] ch={channel_id} "
         f"status={status} error={err_code} data={data}"
@@ -228,7 +220,7 @@ def _ensure_can_post(channel_id: str):
     resp = getattr(e, "response", None)
     status = getattr(resp, "status_code", None)
     data = getattr(resp, "data", None)
-    err_code = (data.get("error") if isinstance(data, dict) else None)
+    err_code = (data.get("error") if isinstance(data, Dict) else None)
     logger.info(
       f"[broadcast-join-skip] ch={channel_id} "
       f"status={status} error={err_code} data={data}"
@@ -273,7 +265,7 @@ def _send_broadcast_to_common_channel(created_channel_id: str, created_channel_n
       resp = getattr(e, "response", None)
       status = getattr(resp, "status_code", None)
       data = getattr(resp, "data", None)
-      err_code = (data.get("error") if isinstance(data, dict) else None)
+      err_code = (data.get("error") if isinstance(data, Dict) else None)
       logger.error(
         f"[broadcast-fail] target={target_id} "
         f"status={status} error={err_code} data={data}"
@@ -351,7 +343,7 @@ def post_message_to_channel(channel_id: str, text: str, thread_ts: Optional[str]
   """
   지정 채널로 텍스트 메시지 전송
   - 레이트리밋(429) 자동 재시도 1회
-  - 실패 시 예외는 던지지 않고 dict 로 반환(호출부에서 판단)
+  - 실패 시 예외는 던지지 않고 Dict 로 반환(호출부에서 판단)
   """
   if not channel_id or not text:
     logger.error("[post-msg] invalid args channel_id/text")
@@ -372,4 +364,4 @@ def post_message_to_channel(channel_id: str, text: str, thread_ts: Optional[str]
       data = getattr(e, "response", None)
       data = getattr(data, "data", None) if data else None
       logger.error(f"[post-msg-fail] ch={channel_id} err={data}")
-      return {"ok": False, "error": (data.get('error') if isinstance(data, dict) else str(e))}
+      return {"ok": False, "error": (data.get('error') if isinstance(data, Dict) else str(e))}
