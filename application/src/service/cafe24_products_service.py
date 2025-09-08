@@ -130,8 +130,8 @@ class Cafe24ProductsService:
     if sku:  id_line_parts.append(f"SKU:{sku}")
 
     lines = []
-    lines.append(f"[Cafe24] 🆕 새로운 상품이 등록되었습니다.")
-    lines.append(f"- 상품명: {name}")
+    lines.append(f"*[Cafe24]* :receipt: *새로운 상품이 등록되었습니다.*")
+    lines.append(f"```- 상품명: {name}")
     if id_line_parts:
       lines.append(f"- 식별자: " + " / ".join(id_line_parts))
     if supplier_codes:
@@ -140,7 +140,7 @@ class Cafe24ProductsService:
       lines.append(f"- 판매가: {self._fmt_money(price)}")
     if stock not in ("", None):
       lines.append(f"- 재고: {stock}")
-    lines.append(f"- 등록시각: {created_kst.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    lines.append(f"- 등록시각: {created_kst.strftime('%Y-%m-%d %H:%M:%S %Z')}```")
     return "\n".join(lines)
 
   def _post_to_channel(self, channel_id: str, text: str):

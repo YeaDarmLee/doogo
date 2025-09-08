@@ -19,6 +19,7 @@ except Exception:
   _slack_client = None
 
 eformsign_webhook = Blueprint("eformsign_webhook", __name__)
+SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
 
 def _notify_slack(channel_id: str, text: str):
   """
@@ -125,13 +126,10 @@ def handle_eformsign_webhook():
       # Slack 알림 (doc_complete만)
       if supplier.channelId:
         msg = (
-          ":white_check_mark: *계약서 작성 완료*\n"
-          f"- 공급사: *{supplier.companyName}*\n"
-          f"- 이메일: `{editor_email}`\n"
-          f"- 문서ID: `{document_id or 'N/A'}`\n"
-          f"- 상태: `{status}`"
+          f":page_with_curl: *계약서 작성 완료* / 공급사: {supplier.companyName} / 이메일: `{editor_email}` / 상태: {status}"
         )
         _notify_slack(supplier.channelId, msg)
+        _notify_slack(SLACK_BROADCAST_CHANNEL_ID, msg)
       else:
         print(f"[{datetime.now()}] [INFO] no channelId for seq={supplier.seq}, skip Slack notify")
 

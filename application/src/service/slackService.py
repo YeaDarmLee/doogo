@@ -1,13 +1,16 @@
+# application/src/service/slackService.py
 import os
 import re
 import time
 import logging
+from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from application.src.models.SupplierList import SupplierList
+from application.src.service.mailer import send_email
 
 logger = logging.getLogger("slack.provision")
 
@@ -25,12 +28,15 @@ SLACK_REQUIRE_ADMIN_INVITE_SUCCESS = os.getenv("SLACK_REQUIRE_ADMIN_INVITE_SUCCE
 
 # 웰컴 메시지 전송 on/off
 SLACK_WELCOME_ENABLED = os.getenv("SLACK_WELCOME_ENABLED", "true").lower() in ("1","true","yes")
-# 관리자 멘션 포함 여부
+# 관리자 멘션 포함 여부 (현재 템플릿 사용 시 직접 멘션 처리 권장)
 SLACK_WELCOME_MENTION_ADMINS = os.getenv("SLACK_WELCOME_MENTION_ADMINS", "true").lower() in ("1","true","yes")
 # 웰컴 메시지 템플릿
 SLACK_WELCOME_TEMPLATE = os.getenv("SLACK_WELCOME_TEMPLATE")
 
-# ========= (신규) 공통 채널 브로드캐스트 =========
+# 워크스페이스 가입(초대) 링크
+SLACK_WORKSPACE_JOIN_URL = os.getenv("SLACK_WORKSPACE_JOIN_URL", "").strip()
+
+# ========= 공통 채널 브로드캐스트 =========
 SLACK_BROADCAST_ENABLED = os.getenv("SLACK_BROADCAST_ENABLED", "true").lower() in ("1","true","yes")
 SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
 SLACK_BROADCAST_CHANNEL_NAME = os.getenv("SLACK_BROADCAST_CHANNEL_NAME", "").strip()
@@ -43,12 +49,6 @@ if not SLACK_BOT_TOKEN:
 client = WebClient(token=SLACK_BOT_TOKEN)
 
 # ========= 유틸 =========
-def _slugify(name: str, fallback: str) -> str:
-  s = (name or fallback).lower()
-  s = re.sub(r"[^a-z0-9\\-]+", "-", s)
-  s = re.sub(r"-{2,}", "-", s).strip("-")
-  return (s or fallback)[:70]
-
 def _sleep_if_rate_limited(e: SlackApiError) -> bool:
   try:
     if getattr(e.response, "status_code", None) == 429:
@@ -130,7 +130,7 @@ def _send_welcome_message(channel_id: str, supplier: SupplierList):
       logger.error(f"[welcome-fail] ch={channel_id} err={getattr(e, 'response', {}).get('data', {})}")
       return  # 웰컴 실패는 전체 실패로 보지 않음
 
-# ========= (신규) 공통 채널 브로드캐스트 =========
+# ========= 공통 채널 브로드캐스트 =========
 def _resolve_channel_id_by_name(name: str) -> Optional[str]:
   """
   채널 이름으로 ID 조회.
@@ -226,7 +226,6 @@ def _ensure_can_post(channel_id: str):
       f"status={status} error={err_code} data={data}"
     )
 
-
 def _send_broadcast_to_common_channel(created_channel_id: str, created_channel_name: str, supplier: SupplierList):
   """
   (4) 공통 채널에 알림 메시지 전송
@@ -296,6 +295,7 @@ def create_slack_channel_only(supplier: SupplierList) -> Dict[str, Any]:
     logger.error(f"[auth-fail] {e.response.data if e.response else e}")
     raise
 
+  # 채널명 정규화(공백/특수문자 제거)
   channel_name = f"{SLACK_CHANNEL_PREFIX}{supplier.companyName}"
   logger.info(f"[create-start] seq={supplier.seq} name={channel_name} private={SLACK_CHANNEL_PRIVATE}")
 
@@ -365,3 +365,127 @@ def post_message_to_channel(channel_id: str, text: str, thread_ts: Optional[str]
       data = getattr(data, "data", None) if data else None
       logger.error(f"[post-msg-fail] ch={channel_id} err={data}")
       return {"ok": False, "error": (data.get('error') if isinstance(data, Dict) else str(e))}
+
+# ========= (신규) 초대 메일 발송 알림 유틸 =========
+def _post_text(channel: str, text: str) -> bool:
+  try:
+    if not channel:
+      return False
+    client.chat_postMessage(channel=channel, text=text)
+    return True
+  except Exception as e:
+    logger.error(f"[slack.notify] post fail ch={channel} err={e}")
+    return False
+
+def notify_invite_mail_sent(email: str, supplier_name: str = "", supplier_channel_id: Optional[str] = None):
+  """
+  초대(가입 유도) 메일을 발송했다는 사실을 슬랙에 알림.
+  - 브로드캐스트 채널 (환경변수)
+  - 공급사 채널(있으면)
+  """
+  when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  sname = supplier_name or "공급사"
+  text = (
+    f":email: *Slack 가입 유도 메일 발송* / 공급사: {sname} / 대상: `{email}` / 시각: {when}"
+  )
+  # 1) 브로드캐스트 채널
+  _post_text(SLACK_BROADCAST_CHANNEL_ID, text)
+  # # 2) 공급사 전용 채널(있으면)
+  # if supplier_channel_id:
+  #   _post_text(supplier_channel_id, text)
+
+# ========= 가입 유도 메일 발송 =========
+def send_workspace_join_invite_email(to_email: str, supplier_name: str) -> bool:
+  """
+  Enterprise/Business+가 아닐 때: 가입을 요청하는 안내 메일 발송.
+  가입 완료 후 배치에서 lookupByEmail → conversations.invite 로 채널 초대.
+  """
+  to = (to_email or "").strip()
+  if not (to and SLACK_WORKSPACE_JOIN_URL):
+    print(f"[invite-mail-skip] to={to} join_url={SLACK_WORKSPACE_JOIN_URL}")
+    return False
+
+  subj = f"[{supplier_name or '공급사'}] Slack 채널 초대를 위한 가입 안내"
+  text = (
+    f"안녕하세요, {supplier_name or '공급사 담당자'}님.\n\n"
+    f"Slack 채널 초대를 위해 먼저 워크스페이스 가입이 필요합니다.\n"
+    f"아래 링크로 가입을 완료해 주세요.\n\n"
+    f"가입 링크: {SLACK_WORKSPACE_JOIN_URL}\n\n"
+    f"가입이 완료되면 시스템이 자동으로 전용 채널로 초대합니다.\n"
+    f"감사합니다."
+  )
+  html = f"""
+  <p>안녕하세요, <b>{supplier_name or '공급사 담당자'}</b>님.</p>
+  <p>Slack 채널 초대를 위해 먼저 워크스페이스 가입이 필요합니다.<br/>
+  아래 링크로 가입을 완료해 주세요.</p>
+  <p><a href="{SLACK_WORKSPACE_JOIN_URL}">워크스페이스 가입하기</a></p>
+  <p>가입이 완료되면 시스템이 자동으로 전용 채널로 초대합니다.</p>
+  <p>감사합니다.</p>
+  """
+  return send_email(to, subj, text, html)
+
+def notify_user_invited_to_channel(
+  email: str,
+  user_id: Optional[str],
+  supplier_name: str = "",
+  supplier_channel_id: Optional[str] = None
+):
+  """
+  가입 완료된 사용자를 전용 채널에 초대(또는 이미 멤버)했음을 슬랙으로 공지.
+  - 브로드캐스트 채널
+  - 공급사 채널(있으면)
+  """
+  when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  sname = supplier_name or "공급사"
+  who = f"<@{user_id}>" if user_id else f"`{email}`"
+  text = (
+    f":chains: *채널 초대 완료* / 공급사: {sname} / 대상: {who} / 시각: {when}"
+  )
+  _post_text(SLACK_BROADCAST_CHANNEL_ID, text)
+  # if supplier_channel_id:
+  #   _post_text(supplier_channel_id, text)
+
+def notify_contract_sent(
+  recipient_email: str,
+  supplier_name: str = "",
+  document_id: Optional[str] = None,
+  supplier_channel_id: Optional[str] = None
+):
+  """
+  eformsign 계약서 '전송 성공' 알림.
+  - 브로드캐스트 채널
+  - 공급사 전용 채널(있으면)
+  """
+  when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  sname = supplier_name or "공급사"
+  text = (
+    f":page_facing_up: *계약서 전송 완료* / 공급사: {sname} / 수신자: `{recipient_email}` / 시각: {when}"
+  )
+  _post_text(SLACK_BROADCAST_CHANNEL_ID, text)
+  # if supplier_channel_id:
+  #   _post_text(supplier_channel_id, text)
+
+
+def notify_contract_failed(
+  recipient_email: str,
+  supplier_name: str = "",
+  reason: str = "",
+  supplier_channel_id: Optional[str] = None
+):
+  """
+  eformsign 계약서 '전송 실패' 알림.
+  - 브로드캐스트 채널
+  - 공급사 전용 채널(있으면)
+  """
+  when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  sname = supplier_name or "공급사"
+  why = f"\n- 사유: {reason}" if reason else ""
+  text = (
+    f":warning: *계약서 전송 실패*\n"
+    f"- 수신자: `{recipient_email}`\n"
+    f"- 공급사: {sname}\n"
+    f"- 시각: {when}{why}"
+  )
+  _post_text(SLACK_BROADCAST_CHANNEL_ID, text)
+  # if supplier_channel_id:
+  #   _post_text(supplier_channel_id, text)

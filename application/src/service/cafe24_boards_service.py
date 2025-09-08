@@ -23,17 +23,15 @@ class Cafe24BoardsService:
       mall_id = resource.get("mall_id")
       board_no = resource.get("board_no")
       post_no = resource.get("no")
-      has_parent = resource.get("has_parent")
       member_id = resource.get("member_id")
       writer = resource.get("writer")
 
       text = (
-        ":memo: *게시물 등록 알림*\n"
-        f"- Mall: {mall_id}\n"
+        "*[Cafe24]* :memo: *게시물 등록 알림*\n"
+        f"```- Mall: {mall_id}\n"
         f"- Board No: {board_no}\n"
         f"- Post No: {post_no}\n"
-        f"- 부모글 여부: {has_parent}\n"
-        f"- 작성자: {writer} ({member_id})"
+        f"- 작성자: {writer} ({member_id})```"
       )
 
       self._post_to_channel(self.broadcast, text)

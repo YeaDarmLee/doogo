@@ -60,6 +60,7 @@ class Cafe24SuppliersService:
     raise RuntimeError("Slack client not available (SLACK_BOT_TOKEN 필요)")
 
   def _post_to_channel(self, channel_id: str, text: str):
+    print(channel_id)
     cli = self._ensure_slack_client()
     cli.chat_postMessage(channel=channel_id, text=text)
 
@@ -133,8 +134,8 @@ class Cafe24SuppliersService:
 
   def _build_message(self, m: Dict[str, Any], topic: str) -> str:
     lines = []
-    lines.append(f"[Cafe24] 공급사 등록/갱신 🧩")
-    lines.append(f"- 공급사 코드: {m['supplier_code'] or '-'}")
+    lines.append(f"*[Cafe24]* :speaker: *공급사 등록/갱신*")
+    lines.append(f"```- 공급사 코드: {m['supplier_code'] or '-'}")
     if m["supplier_name"]:
       lines.append(f"- 공급사명: {m['supplier_name']}")
     if m["status"]:
@@ -147,7 +148,7 @@ class Cafe24SuppliersService:
       lines.append(f"- 정산방식: {m['payment_type']} / 주기:{m['payment_period'] or '-'} / 수수료:{m['commission'] or '-'}")
     if m["mall_id"]:
       lines.append(f"- 몰: {m['mall_id']} (shop_no: {m['event_shop_no']})")
-    lines.append(f"- 수신시각: {m['ts_kst'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    lines.append(f"- 수신시각: {m['ts_kst'].strftime('%Y-%m-%d %H:%M:%S %Z')}```")
     return "\n".join(lines)
 
   # ---------- 엔트리 ----------

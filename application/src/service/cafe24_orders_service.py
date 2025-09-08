@@ -167,8 +167,8 @@ class Cafe24OrdersService:
   def _build_message(self, meta: Dict[str, Any], items: List[Dict[str, Any]], topic: str) -> str:
     lines: List[str] = []
     status = "결제완료" if meta["paid"] else "미결제"
-    lines.append(f"[Cafe24] 🔔 신규주문이 발생하였습니다.")
-    lines.append(f"- 주문번호: {meta['order_id']}")
+    lines.append(f"*[Cafe24]* :bell: *신규주문이 발생하였습니다.*")
+    lines.append(f"```- 주문번호: {meta['order_id']}")
     lines.append(f"- 주문시각: {meta['ordered_at'].strftime('%Y-%m-%d %H:%M:%S %Z')} ({status})")
 
     if items:
@@ -193,7 +193,7 @@ class Cafe24OrdersService:
 
     # 디버깅용: 공급사코드 표시(운영 중엔 빼도 됨)
     if meta.get("supplier_codes"):
-      lines.append(f"- 공급사 코드: {meta['supplier_codes']}")
+      lines.append(f"- 공급사 코드: {meta['supplier_codes']}```")
 
     return "\n".join(lines)
 
