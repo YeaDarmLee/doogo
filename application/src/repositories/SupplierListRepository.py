@@ -56,3 +56,7 @@ class SupplierListRepository:
     stmt = select(SupplierList).where(SupplierList.supplierCode == supplier_code)
     return db.session.execute(stmt).scalar_one_or_none()
   
+  @staticmethod
+  def find_by_channel_id(channel_id: str) -> Optional[SupplierList]:
+    stmt = select(SupplierList).where(SupplierList.channelId == channel_id)
+    return db.session.execute(stmt).scalar_one_or_none()

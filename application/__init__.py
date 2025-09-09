@@ -39,3 +39,9 @@ app.register_blueprint(eformsign_webhook)
 
 from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
 app.register_blueprint(cafe24_webhooks_bp)
+
+from application.controllers.slack_commands import slack_commands
+app.register_blueprint(slack_commands)
+
+from application.controllers.cafe24_oauth_controller import cafe24_oauth_controller
+app.register_blueprint(cafe24_oauth_controller)

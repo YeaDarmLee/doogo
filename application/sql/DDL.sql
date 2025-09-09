@@ -32,3 +32,16 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   INDEX idx_topic_received_at (topic, received_at),
   UNIQUE KEY uq_dedupe (dedupe_key)
 );
+
+-- OAuth 토큰 저장 테이블 (프로바이더별 1행)
+CREATE TABLE IF NOT EXISTS OAUTH_TOKEN (
+  PROVIDER      VARCHAR(20)  NOT NULL,               -- 예: 'cafe24'
+  MALL_ID       VARCHAR(50)  NULL,                   -- abc123 (선택)
+  REFRESH_TOKEN TEXT         NOT NULL,               -- 최신 refresh_token
+  ACCESS_TOKEN  TEXT         NULL,                   -- 최근 발급 access_token (선택)
+  EXPIRES_AT    DATETIME     NULL,                   -- access_token 만료 시각(선택)
+  SCOPE         VARCHAR(255) NULL,                   -- 권한 스코프(선택)
+  UPDATED_AT    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CREATED_AT    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (PROVIDER)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
