@@ -259,9 +259,13 @@ def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] 
   params = {
     "start_date": start_date.strftime("%Y-%m-%d"),
     "end_date": end_date.strftime("%Y-%m-%d"),
-    "limit": 20,
+    "limit": 50,  # 페이지네이션은 슬랙에서 slice로 처리하므로 여긴 넉넉히 가져옵니다.
     "embed": "items",
-    "fields": "order_id,order_date,order_price,payment_amount"
+    # 결제수단 후보 포함(몰마다 다를 수 있어 여러 후보를 요청)
+    "fields": (
+      "order_id,order_date,order_price,payment_amount,"
+      "payment_method,payment_method_name,paymethod,pg_name"
+    )
   }
 
   results = []
@@ -288,11 +292,21 @@ def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] 
             break
         if not ok:
           continue
+
+      pay_method = (
+        o.get("payment_method")
+        or o.get("payment_method_name")
+        or o.get("paymethod")
+        or o.get("pg_name")
+        or "-"
+      )
+
       results.append({
         "order_id": o.get("order_id"),
         "order_date": o.get("order_date"),
         "order_price": o.get("order_price"),
         "payment_amount": o.get("payment_amount"),
+        "payment_method": pay_method,
       })
 
     next_link = _find_next_link(payload)

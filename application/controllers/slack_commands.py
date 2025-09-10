@@ -1,7 +1,7 @@
 # application/src/service/slack_commands.py
 from flask import Blueprint, request, jsonify, make_response, current_app
 from datetime import datetime
-import requests, threading, traceback
+import requests, threading, traceback, json
 from typing import Optional
 from application.src.service.slack_verify import verify_slack_request
 from application.src.service.sales_service import fetch_sales_summary, first_day_of_month, fetch_order_list
@@ -9,11 +9,13 @@ from application.src.repositories.SupplierListRepository import SupplierListRepo
 
 slack_commands = Blueprint("slack_commands", __name__, url_prefix="/slack/commands")
 
-def _fmt_currency(value: int) -> str:
+def _fmt_currency(value):
   try:
-    return f"{int(value):,}원"
+    if value in (None, "", "None"):
+      return "0원"
+    return f"{int(float(str(value).replace(',', '') )):,}원"
   except Exception:
-    return str(value)
+    return f"{value}원"
 
 def _post_to_response_url(response_url: str, payload: dict):
   try:
@@ -123,7 +125,9 @@ def slash_sales_detail():
   if channel_id:
     supplier = SupplierListRepository.find_by_channel_id(channel_id)
     if supplier:
-      supply_id = supplier.supplierID
+      # 주의: 레거시 코드에 supplier.supplierID/Code 혼재 → 실제 모델에 맞춰 사용
+      # 이 프로젝트에선 주문 필터에 쓰는 supply_id는 'supplierID'가 맞는 것으로 보입니다.
+      supply_id = supplier.supplierCode
 
   today = datetime.now().date()
   start = first_day_of_month(today)
@@ -143,23 +147,150 @@ def slash_sales_detail():
       "text": f"이번 달 주문 내역이 없습니다. ({start} ~ {end})"
     })
 
-  # Slack Block Kit 메시지 빌드
+  # ---- 페이지네이션: 처음엔 0~9만 노출
+  page_size = 10
+  offset = 0
+  slice_orders = orders[offset:offset+page_size]
+
   blocks = [
     { "type": "section", "text": { "type": "mrkdwn", "text": f"*이번 달 주문 상세 ({start} ~ {end})*" } },
     { "type": "divider" }
   ]
 
-  for o in orders[:20]:  # 너무 많으면 일부만 보여주기
+  for o in slice_orders:
+    gross = o.get("order_price") or o.get("payment_amount")
+    net = o.get("payment_amount")
+    pay = o.get("payment_method") or "-"
     blocks.append({
       "type": "section",
       "text": {
         "type": "mrkdwn",
-        "text": f"*주문ID:* {o['order_id']}\n*주문일시:* {o['order_date']}\n*총액:* {o['order_price']}원 / *결제액:* {o['payment_amount']}원"
+        "text": (
+          f"*주문ID:* {o['order_id']}\n"
+          f"*주문일시:* {o['order_date']}\n"
+          f"*총액:* {_fmt_currency(gross)} / *결제액:* {_fmt_currency(net)}\n"
+          f"*결제방식:* {pay}"
+        )
       }
     })
     blocks.append({ "type": "divider" })
+
+  # 더보기 버튼(남은 데이터가 있을 때만)
+  if len(orders) > page_size:
+    cursor = {
+      "start": start.isoformat(),
+      "end": end.isoformat(),
+      "supply_id": supply_id,
+      "offset": page_size,
+      "page_size": page_size
+    }
+    blocks.append({
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "action_id": "sales_detail_more",
+          "text": { "type": "plain_text", "text": "더보기" },
+          "value": json.dumps(cursor)
+        }
+      ]
+    })
 
   return jsonify({
     "response_type": "ephemeral",
     "blocks": blocks
   })
+
+@slack_commands.route("/interactive", methods=["POST"])
+def interactive():
+  # 슬랙 interactivity 엔드포인트
+  if not verify_slack_request(request):
+    return make_response("invalid signature", 401)
+
+  payload_raw = request.form.get("payload")
+  if not payload_raw:
+    return jsonify({})
+
+  payload = json.loads(payload_raw)
+  action = (payload.get("actions") or [{}])[0]
+  action_id = action.get("action_id")
+  response_url = payload.get("response_url")
+
+  if action_id != "sales_detail_more":
+    return jsonify({})
+
+  try:
+    cursor = json.loads(action.get("value") or "{}")
+    start = cursor.get("start")
+    end = cursor.get("end")
+    supply_id = cursor.get("supply_id")
+    offset = int(cursor.get("offset", 0))
+    page_size = int(cursor.get("page_size", 10))
+
+    # 문자열 → date
+    from datetime import date
+    def _to_date(s): 
+      y, m, d = [int(x) for x in s.split("-")]
+      return date(y, m, d)
+
+    orders = fetch_order_list(_to_date(start), _to_date(end), supply_id=supply_id)
+    next_slice = orders[offset:offset+page_size]
+
+    more_blocks = []
+    for o in next_slice:
+      gross = o.get("order_price") or o.get("payment_amount")
+      net = o.get("payment_amount")
+      pay = o.get("payment_method") or "-"
+      more_blocks.append({
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": (
+            f"*주문ID:* {o['order_id']}\n"
+            f"*주문일시:* {o['order_date']}\n"
+            f"*총액:* {_fmt_currency(gross)} / *결제액:* {_fmt_currency(net)}\n"
+            f"*결제방식:* {pay}"
+          )
+        }
+      })
+      more_blocks.append({ "type": "divider" })
+
+    # 다음 페이지가 더 있으면 버튼 유지, 없으면 버튼 제거
+    new_offset = offset + page_size
+    if new_offset < len(orders):
+      next_cursor = {
+        "start": start,
+        "end": end,
+        "supply_id": supply_id,
+        "offset": new_offset,
+        "page_size": page_size
+      }
+      more_blocks.append({
+        "type": "actions",
+        "elements": [
+          {
+            "type": "button",
+            "action_id": "sales_detail_more",
+            "text": { "type": "plain_text", "text": "더보기" },
+            "value": json.dumps(next_cursor)
+          }
+        ]
+      })
+
+    # 원본 메시지를 유지하면서 아래에 새 블록을 "추가" (in_channel로도 가능)
+    _post_to_response_url(response_url, {
+      "response_type": "ephemeral",
+      "replace_original": False,
+      "blocks": more_blocks
+    })
+  except Exception:
+    traceback.print_exc()
+    if response_url:
+      _post_to_response_url(response_url, {
+        "response_type": "ephemeral",
+        "replace_original": False,
+        "text": ":warning: 더보기 처리 중 오류가 발생했습니다."
+      })
+
+  # 200 OK 즉시
+  return jsonify({})

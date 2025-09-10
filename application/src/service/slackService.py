@@ -121,7 +121,7 @@ def _send_welcome_message(channel_id: str, supplier: SupplierList):
 
   for attempt in range(2):
     try:
-      client.chat_postMessage(channel=channel_id, text=text)
+      # client.chat_postMessage(channel=channel_id, text=text)
       logger.info(f"[welcome-ok] ch={channel_id}")
       return
     except SlackApiError as e:
@@ -258,6 +258,7 @@ def _send_broadcast_to_common_channel(created_channel_id: str, created_channel_n
   for attempt in range(2):
     try:
       client.chat_postMessage(channel=target_id, text=text)
+      client.chat_postMessage(channel=created_channel_id, text=text)
       logger.info(f"[broadcast-ok] target={target_id}")
       return
     except SlackApiError as e:
@@ -331,7 +332,7 @@ def create_slack_channel_only(supplier: SupplierList) -> Dict[str, Any]:
   _invite_admins(channel_id)
 
   # 4-1) 웰컴 메시지(생성된 채널)
-  _send_welcome_message(channel_id, supplier)
+  # _send_welcome_message(channel_id, supplier)
 
   # 4-2) 공통 채널 브로드캐스트
   _send_broadcast_to_common_channel(channel_id, channel.get("name") or channel_name, supplier)
@@ -391,8 +392,8 @@ def notify_invite_mail_sent(email: str, supplier_name: str = "", supplier_channe
   # 1) 브로드캐스트 채널
   _post_text(SLACK_BROADCAST_CHANNEL_ID, text)
   # # 2) 공급사 전용 채널(있으면)
-  # if supplier_channel_id:
-  #   _post_text(supplier_channel_id, text)
+  if supplier_channel_id:
+    _post_text(supplier_channel_id, text)
 
 # ========= 가입 유도 메일 발송 =========
 def send_workspace_join_invite_email(to_email: str, supplier_name: str) -> bool:
@@ -442,8 +443,8 @@ def notify_user_invited_to_channel(
     f":chains: *채널 초대 완료* / 공급사: {sname} / 대상: {who} / 시각: {when}"
   )
   _post_text(SLACK_BROADCAST_CHANNEL_ID, text)
-  # if supplier_channel_id:
-  #   _post_text(supplier_channel_id, text)
+  if supplier_channel_id:
+    _post_text(supplier_channel_id, text)
 
 def notify_contract_sent(
   recipient_email: str,
@@ -462,8 +463,8 @@ def notify_contract_sent(
     f":page_facing_up: *계약서 전송 완료* / 공급사: {sname} / 수신자: `{recipient_email}` / 시각: {when}"
   )
   _post_text(SLACK_BROADCAST_CHANNEL_ID, text)
-  # if supplier_channel_id:
-  #   _post_text(supplier_channel_id, text)
+  if supplier_channel_id:
+    _post_text(supplier_channel_id, text)
 
 
 def notify_contract_failed(
