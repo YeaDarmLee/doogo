@@ -21,6 +21,7 @@ class Cafe24BoardsService:
     try:
       resource = payload.get("resource") or {}
       mall_id = resource.get("mall_id")
+      event_shop_no = resource.get("event_shop_no")
       board_no = resource.get("board_no")
       post_no = resource.get("no")
       member_id = resource.get("member_id")
@@ -29,6 +30,7 @@ class Cafe24BoardsService:
       text = (
         "*[Cafe24]* :memo: *게시물 등록 알림*\n"
         f"```- Mall: {mall_id}\n"
+        f"- Event Shop No: {event_shop_no}\n"
         f"- Board No: {board_no}\n"
         f"- Post No: {post_no}\n"
         f"- 작성자: {writer} ({member_id})```"

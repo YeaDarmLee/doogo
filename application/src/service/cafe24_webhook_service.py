@@ -168,6 +168,11 @@ class Cafe24WebhookService:
         self.orders.notify_order_created(payload, f"event/{event_no}")
         routed = "orders.created"
 
+      elif event_no == 90024:
+        # 쇼핑몰 주문의 배송상태가 변경된 경우
+        self.orders.notify_order_shipping_updated(payload, f"event/{event_no}")
+        routed = "orders.shipping_updated"
+
       if not routed:
         self._log(f"no route matched: event_no={event_no}, topic={topic}")
     except Exception as e:

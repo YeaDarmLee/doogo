@@ -216,3 +216,89 @@ class Cafe24OrdersService:
         self._post_to_channel(supplier.channelId, text)
       except Exception as e:
         print(f"[orders.notify][fail] ch={supplier.channelId} err={e}")
+
+  def _extract_supplier_codes(self, payload: Dict[str, Any]) -> List[str]:
+    d = self._coalesce(payload)
+    out = set()
+    # 1) 상위 CSV
+    csv_codes = (d.get("supplier_code") or "")
+    if csv_codes:
+      for c in csv_codes.split(","):
+        c = c.strip()
+        if c:
+          out.add(c)
+    # 2) extra_info 배열 내 supplier_code
+    try:
+      for row in d.get("extra_info") or []:
+        c = (row or {}).get("supplier_code")
+        if c:
+          out.add(str(c).strip())
+    except Exception:
+      pass
+    return list(out)
+
+  def _map_shipping_code(self, event_code: str) -> str:
+    code = (event_code or "").lower()
+    # 필요 시 계속 확장
+    mapping = {
+      "shipping_start": "배송시작",
+      "shipping_ready": "배송준비",
+      "shipping_complete": "배송완료",
+    }
+    return mapping.get(code, event_code or "-")
+
+  def notify_order_shipping_updated(self, payload: Dict[str, Any], topic: str):
+    d = self._coalesce(payload)
+    meta = self._extract_order_meta(payload)
+
+    event_code = d.get("event_code") or ""
+    shipping_status = d.get("shipping_status") or ""
+    supplier_codes = self._extract_supplier_codes(payload)
+
+    # 대표 품목 간단 표시 (CSV 기반)
+    items = self._extract_items(payload)
+
+    # 메시지 구성
+    lines = []
+    lines.append(f"*[Cafe24]* :truck: *배송상태가 변경되었습니다.*")
+    lines.append(f"```- 주문번호: {meta['order_id']}")
+    lines.append(f"- 변경코드: {self._map_shipping_code(event_code)} (raw: {event_code})")
+    if shipping_status:
+      lines.append(f"- 배송상태: {shipping_status}")
+    lines.append(f"- 주문시각: {meta['ordered_at'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    if items:
+      lines.append("- 품목:")
+      for it in items[:10]:
+        nm = it.get("name") or ""
+        qty = it.get("qty") or 1
+        tail = f" · 코드:{it.get('code')}" if it.get("code") else ""
+        lines.append(f"  · {nm} × {qty}{tail}")
+      if len(items) > 10:
+        lines.append(f"  · 외 {len(items) - 10}건…")
+    if meta['currency'] == "KRW":
+      lines.append(f"- 주문합계: {self._fmt_money(meta['total'])}")
+    else:
+      lines.append(f"- 주문합계: {meta['total']} {meta['currency']}")
+    if meta["place"]:
+      lines.append(f"- 주문경로: {meta['place']}")
+    if meta["buyer_name"]:
+      lines.append(f"- 구매자: {meta['buyer_name']} ({meta['buyer_email']})")
+    if supplier_codes:
+      lines.append(f"- 공급사 코드: {', '.join(supplier_codes)}```")
+    else:
+      lines.append("```")
+
+    text = "\n".join(lines)
+
+    # 1) 방송 채널
+    self._post_to_channel(SLACK_BROADCAST_CHANNEL_ID, text)
+
+    # 2) 공급사 채널
+    for code in supplier_codes:
+      try:
+        supplier = SupplierListRepository.findBySupplierCode(code)
+        ch_id = getattr(supplier, "channelId", None)
+        if ch_id:
+          self._post_to_channel(ch_id, text)
+      except Exception as e:
+        print(f"[orders.shipping][fail] supplier_code={code} err={e}")
