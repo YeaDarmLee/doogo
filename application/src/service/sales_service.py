@@ -1,298 +1,152 @@
 # application/src/service/sales_service.py
 # -*- coding: utf-8 -*-
+"""
+/sales 집계 로직 (Count → Orders 페이징 → items.payment_amount 합산)
+- supplier_id: 채널 매핑에서 받은 supplierCode 를 그대로 전달
+- 주문건수: /api/v2/admin/orders/count 의 count
+- 총매출: /api/v2/admin/orders?embed=items 의 items.payment_amount 합산
+- 정산예상: 총매출 * 0.85 (원단위 반올림)
+- 판매수량: items.quantity 합
+- print 로그 촘촘히 포함
+"""
 
-from datetime import date
-from typing import Dict, Any, Optional, Tuple
 import os
 import time
-import requests
+from typing import Dict, Any, List, Tuple, Optional, Iterable
 from decimal import Decimal, InvalidOperation
+from datetime import date, datetime
+import requests
+
 from application.src.service.cafe24_oauth_service import get_access_token
 
-CAFE24_BASE_URL = os.getenv("CAFE24_BASE_URL")
+CAFE24_BASE_URL = os.getenv("CAFE24_BASE_URL", "").rstrip("/")
 
 
-# -----------------------------
-# 유틸: 안전 숫자 변환
-# -----------------------------
-def _to_decimal(v: Any) -> Decimal:
-  """문자/숫자/None을 Decimal로 안전 변환"""
+# -------------------- 유틸 --------------------
+def _to_dec(v) -> Decimal:
   if v is None:
     return Decimal(0)
-  if isinstance(v, Decimal):
-    return v
-  if isinstance(v, (int, float)):
+  try:
     return Decimal(str(v))
-  if isinstance(v, str):
-    s = v.strip().replace(",", "")
-    if s == "":
-      return Decimal(0)
-    try:
-      return Decimal(s)
-    except InvalidOperation:
-      return Decimal(0)
-  return Decimal(0)
+  except Exception:
+    return Decimal(0)
 
-def _to_int(v: Any) -> int:
-  """정수로 안전 변환 (문자 '10', Decimal 등 허용)"""
+def _to_int(v) -> int:
   if v is None:
     return 0
-  if isinstance(v, int):
-    return v
-  if isinstance(v, float):
-    return int(v)
-  if isinstance(v, str):
-    s = v.strip().replace(",", "")
-    if s == "":
-      return 0
+  try:
+    return int(Decimal(str(v)))
+  except Exception:
+    return 0
+
+def _chunked(it: Iterable[Any], size: int) -> Iterable[List[Any]]:
+  buf: List[Any] = []
+  for x in it:
+    buf.append(x)
+    if len(buf) >= size:
+      yield buf
+      buf = []
+  if buf:
+    yield buf
+
+def _safe_get(url: str, params: Dict[str, Any], token: str, tries: int = 6, tag: str = "-") -> requests.Response:
+  for i in range(1, tries + 1):
     try:
-      return int(Decimal(s))
-    except InvalidOperation:
-      return 0
-  if isinstance(v, Decimal):
-    return int(v)
-  return 0
+      print(f"[sales:{tag}] GET {url} try={i}/{tries} params={params}")
+      r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=25)
+      if r.status_code == 429:
+        ra = int(r.headers.get("Retry-After", "1"))
+        wait = max(1, ra)
+        print(f"[sales:{tag}] 429 Too Many Requests → sleep {wait}s")
+        time.sleep(wait); continue
+      r.raise_for_status()
+      print(f"[sales:{tag}] OK {url} status={r.status_code} bytes={len(r.content)}")
+      return r
+    except Exception as e:
+      print(f"[sales:{tag}] ERROR {url} ({e})")
+      if i == tries:
+        raise
+      time.sleep(1.2 * i)
+  raise RuntimeError(f"[sales:{tag}] GET exhausted: {url}")
 
 
-# -----------------------------
-# 안전 GET (429 Retry 포함)
-# -----------------------------
-def _safe_get(url: str, token: str, params: Optional[Dict[str, Any]] = None, *, max_retry: int = 3) -> requests.Response:
-  """
-  Cafe24 API 호출 시 429(Too Many Requests) 대응을 포함한 안전 GET.
-  Retry-After 헤더가 있으면 해당 초만큼 대기 후 재시도.
-  """
-  for _ in range(max_retry):
-    r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=10)
-    if r.status_code == 429:
-      ra = int(r.headers.get("Retry-After", "1"))
-      time.sleep(max(ra, 1))
-      continue
-    r.raise_for_status()
-    return r
-  # 마지막 시도도 실패하면 예외
-  r.raise_for_status()
-  return r  # pragma: no cover
-
-
-# -----------------------------
-# 공개 API
-# -----------------------------
-def fetch_sales_summary(start_date: date, end_date: date, supply_id: Optional[str] = None) -> Dict:
-  """
-  Cafe24 Orders API를 호출하여 start_date~end_date 구간 매출 요약을 반환.
-  - supply_id 가 주어지면 '공급사별' 집계를 수행(주문 품목 embed 사용, 정확/최적화)
-  - supply_id 가 없으면 몰 전체 집계(주문 리스트만 사용, 빠름)
-
-  반환 스키마:
-  {
-    "orders": int,         # 주문건수
-    "gross_amount": int,   # 총매출(원) - order_price 없으면 payment_amount로 대체
-    "net_amount": int,     # 실결제/정산 기준(원) - payment_amount
-    "items": int           # 판매수량(개) - 공급사 기준일 때 품목 qty 합계, 전체 집계는 0
-  }
-  """
-  token = get_access_token()
-
-  if supply_id:
-    # 공급사 기준: embed=items 로 주문+품목을 한 번에 받아 정확 집계
-    ord_cnt, gross_dec, net_dec, items_total = _aggregate_by_supply(
-      token, start_date, end_date, supply_id
-    )
-    return {
-      "orders": ord_cnt,
-      "gross_amount": int(gross_dec),
-      "net_amount": int(net_dec),
-      "items": items_total
-    }
-
-  # 전체 집계(빠름): 주문 리스트만 사용
-  ord_cnt, gross_dec, net_dec = _aggregate_overall(token, start_date, end_date)
-  return {
-    "orders": ord_cnt,
-    "gross_amount": int(gross_dec),
-    "net_amount": int(net_dec),
-    "items": 0  # 전체 집계에서는 품목 호출 생략(경량). 필요 시 확장 가능
-  }
-
-
+# -------------------- 공개 함수 --------------------
 def first_day_of_month(today: date) -> date:
   return today.replace(day=1)
 
 
-# -----------------------------
-# 내부 구현: 전체 집계(주문 리스트 기반)
-# -----------------------------
-def _aggregate_overall(token: str, start_date: date, end_date: date) -> Tuple[int, Decimal, Decimal]:
+def fetch_sales_summary(start_date: date, end_date: date, supply_id: Optional[str] = None) -> Dict[str, Any]:
   """
-  몰 전체 집계: 주문 리스트에서 payment_amount와 order_price를 합산.
-  order_price가 응답에 없으면 총매출(gross)은 payment_amount로 대체.
+  /sales 에서 사용.
+  - supply_id: 채널에서 가져온 supplierCode (없으면 전체 집계)
+  - 반환: {"orders":int, "gross_amount":int, "net_amount":int, "items":int}
   """
-  base = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
-  params = {
-    "start_date": start_date.strftime("%Y-%m-%d"),
-    "end_date": end_date.strftime("%Y-%m-%d"),
-    "limit": 50,
-    # 금액 필드를 반드시 요청
-    "fields": "order_id,order_date,order_price,payment_amount,product_count"
+  tag = hex(abs(hash(f"{start_date}-{end_date}-{supply_id}-{time.time()}")))[2:10]
+  s = start_date.isoformat()
+  e = end_date.isoformat()
+  print(f"[sales:{tag}] fetch_sales_summary {s}~{e} supplier_id={supply_id}")
+
+  # 1) 주문 수
+  orders_count = _fetch_orders_count(s, e, supply_id, tag)
+  print(f"[sales:{tag}] COUNT result={orders_count}")
+  if orders_count == 0:
+    summary = {"orders": 0, "gross_amount": 0, "net_amount": 0, "items": 0}
+    print(f"[sales:{tag}] SUMMARY {summary}")
+    return summary
+
+  # 2) 주문 목록 페이징으로 품목코드/수량/금액 수집 (items.payment_amount 사용)
+  _, total_qty, inline_gross = _collect_items_from_orders(s, e, supply_id, orders_count, tag)
+
+  # 3) 정산예상 = 85%
+  gross = int(inline_gross)
+  net = int((Decimal(gross) * Decimal("0.85")).quantize(Decimal("1.")))
+
+  summary = {
+    "orders": int(orders_count),
+    "gross_amount": gross,
+    "net_amount": net,
+    "items": int(total_qty),
   }
-
-  total_orders = 0
-  gross_amount_dec = Decimal(0)
-  net_amount_dec = Decimal(0)
-
-  next_url = base
-  next_params = params
-
-  while True:
-    r = _safe_get(next_url, token, next_params)
-    payload = r.json()
-
-    orders = payload.get("orders", []) or []
-    total_orders += len(orders)
-
-    for o in orders:
-      # 실결제/정산 기준(최종금액)
-      net_amount_dec += _to_decimal(o.get("payment_amount"))
-      # 총매출: order_price가 없으면 payment_amount로 대체
-      gross_amount_dec += _to_decimal(o.get("order_price", o.get("payment_amount")))
-
-    # pagination
-    next_link = _find_next_link(payload)
-    if not next_link:
-      break
-    next_url, next_params = next_link, None  # href에 쿼리 포함됨
-
-  return total_orders, gross_amount_dec, net_amount_dec
+  print(f"[sales:{tag}] SUMMARY {summary}")
+  return summary
 
 
-# -----------------------------
-# 내부 구현: 공급사별 집계(주문 품목 기반, embed=items)
-# -----------------------------
-def _aggregate_by_supply(token: str, start_date: date, end_date: date, supply_id: str) -> Tuple[int, Decimal, Decimal, int]:
+def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] = None) -> List[Dict[str, Any]]:
   """
-  공급사 기준으로 정확 집계(최적화 버전):
-  - /admin/orders?embed=items 로 주문 + 품목을 한 번에 받아 품목 단위로 필터링/합산.
-  - 추가 /items 호출이 없어 레이트리밋(429) 위험이 크게 줄어듦.
-  - 금액 계산:
-    * item.payment_amount 가 있으면 "해당 라인 합계"로 간주하여 그대로 사용
-    * 없으면 price(또는 sale_price) * quantity 로 계산
-    * 공급사별 총매출(gross)은 정산금액(net)과 동일하게 처리(주문 단위 order_price 배분은 불확실)
+  /sales_detail 용 간단 리스트.
+  - supplier_id 로 필터한 주문을 날짜 구간 전체 받아서 표시용 필드만 추림
+  - order_price 가 없으면 payment_amount 로 대체
   """
-  base_orders = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
-  params = {
-    "start_date": start_date.strftime("%Y-%m-%d"),
-    "end_date": end_date.strftime("%Y-%m-%d"),
-    "limit": 50,
-    "embed": "items",  # ← 핵심: 주문 응답에 items 포함
-    # 주문 레벨 금액을 굳이 쓰지 않으므로 fields는 최소화 가능하나,
-    # 디버깅/확인을 위해 유지해도 무방
-    "fields": "order_id,order_date,order_price,payment_amount"
-  }
-
-  total_orders = 0
-  gross_amount_dec = Decimal(0)
-  net_amount_dec = Decimal(0)
-  items_total = 0
-
-  next_url = base_orders
-  next_params = params
-
-  # 품목에서 공급사 식별자 후보 키 (몰/버전에 따라 달라질 수 있음)
-  owner_keys = ("supply_id", "supplier_id", "supplier_code", "owner_code", "vendor_id", "provider_id")
-
-  while True:
-    r = _safe_get(next_url, token, next_params)  # 429 대응 포함
-    payload = r.json()
-    orders = payload.get("orders", []) or []
-
-    for o in orders:
-      items = o.get("items") or []  # embed=items 결과
-      has_supply = False
-
-      for it in items:
-        # 공급사 식별자 추출 (첫 번째로 존재하는 키 사용)
-        owner = None
-        for k in owner_keys:
-          v = it.get(k)
-          if v is not None and str(v) != "":
-            owner = v
-            break
-
-        if str(owner) != str(supply_id):
-          continue
-
-        has_supply = True
-        qty = _to_int(it.get("quantity"))
-
-        # 금액 확정:
-        # - item.payment_amount 가 있으면 해당 라인 합계로 간주(곱셈 X)
-        # - 없으면 price(or sale_price) * qty
-        item_paid = _to_decimal(it.get("payment_amount"))
-        if item_paid == 0:
-          price_each = _to_decimal(it.get("price") or it.get("sale_price") or 0)
-          item_paid = price_each * qty
-
-        items_total += qty
-        net_amount_dec += item_paid
-        gross_amount_dec += item_paid  # 주문단위 총매출 배분이 필요하면 여기서 교체
-
-      # 해당 공급사 품목이 1개 이상 포함된 주문만 주문건수로 카운트
-      if has_supply:
-        total_orders += 1
-
-    # pagination
-    next_link = _find_next_link(payload)
-    if not next_link:
-      break
-    next_url, next_params = next_link, None  # href에 쿼리 포함됨
-
-  return total_orders, gross_amount_dec, net_amount_dec, items_total
-
-def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] = None) -> list[dict]:
-  """
-  Cafe24 Orders API에서 start_date~end_date 주문 리스트 반환.
-  supply_id 있으면 해당 공급사 품목이 있는 주문만 필터링.
-  """
+  tag = hex(abs(hash(f"detail-{start_date}-{end_date}-{supply_id}-{time.time()}")))[2:10]
+  s = start_date.isoformat(); e = end_date.isoformat()
   token = get_access_token()
-  base = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
-  params = {
-    "start_date": start_date.strftime("%Y-%m-%d"),
-    "end_date": end_date.strftime("%Y-%m-%d"),
-    "limit": 50,  # 페이지네이션은 슬랙에서 slice로 처리하므로 여긴 넉넉히 가져옵니다.
-    "embed": "items",
-    # 결제수단 후보 포함(몰마다 다를 수 있어 여러 후보를 요청)
-    "fields": (
-      "order_id,order_date,order_price,payment_amount,"
-      "payment_method,payment_method_name,paymethod,pg_name"
-    )
-  }
 
-  results = []
-  next_url, next_params = base, params
-  owner_keys = ("supply_id", "supplier_id", "supplier_code", "owner_code", "vendor_id", "provider_id")
+  url = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
+  limit = 1000
+  offset = 0
+  max_offset = 15000
+
+  results: List[Dict[str, Any]] = []
 
   while True:
-    r = _safe_get(next_url, token, next_params)
-    payload = r.json()
-    orders = payload.get("orders", []) or []
+    params = {
+      "start_date": s,
+      "end_date": e,
+      "date_type": "pay_date",
+      "limit": limit,
+      "offset": offset,
+      # 표시용 필드만 (items 불필요)
+      "fields": "order_id,order_date,order_price,payment_amount,payment_method,payment_method_name,paymethod,pg_name",
+    }
+    if supply_id:
+      params["supplier_id"] = supply_id
+
+    r = _safe_get(url, params, token, tag=tag)
+    data = r.json() or {}
+    orders = data.get("orders") or []
+    print(f"[sales:{tag}] LIST detail got={len(orders)} offset={offset}")
 
     for o in orders:
-      if supply_id:
-        items = o.get("items") or []
-        ok = False
-        for it in items:
-          owner = None
-          for k in owner_keys:
-            if it.get(k):
-              owner = it.get(k)
-              break
-          if str(owner) == str(supply_id):
-            ok = True
-            break
-        if not ok:
-          continue
-
       pay_method = (
         o.get("payment_method")
         or o.get("payment_method_name")
@@ -300,31 +154,143 @@ def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] 
         or o.get("pg_name")
         or "-"
       )
-
       results.append({
         "order_id": o.get("order_id"),
         "order_date": o.get("order_date"),
-        "order_price": o.get("order_price"),
+        "order_price": (o.get("order_price") or o.get("payment_amount")),
         "payment_amount": o.get("payment_amount"),
         "payment_method": pay_method,
       })
 
-    next_link = _find_next_link(payload)
-    if not next_link:
+    got = len(orders)
+    if got < limit or offset > max_offset:
       break
-    next_url, next_params = next_link, None
+    offset += got
 
+  print(f"[sales:{tag}] LIST detail total={len(results)}")
   return results
 
 
-# -----------------------------
-# 공통: next 링크 추출
-# -----------------------------
-def _find_next_link(payload: Dict[str, Any]) -> Optional[str]:
-  links = payload.get("links") or []
-  for l in links:
-    if l.get("rel") == "next":
-      href = l.get("href")
-      if href:
-        return href
-  return None
+# -------------------- 내부 구현 --------------------
+def _fetch_orders_count(s: str, e: str, supplier_id: Optional[str], tag: str) -> int:
+  token = get_access_token()
+  url = f"{CAFE24_BASE_URL}/api/v2/admin/orders/count"
+  params = {"start_date": s, "end_date": e, "date_type": "pay_date"}
+  if supplier_id:
+    params["supplier_id"] = supplier_id
+  r = _safe_get(url, params, token, tag=tag)
+  payload = r.json() or {}
+  return int(payload.get("count", 0))
+
+
+def _collect_items_from_orders(s: str, e: str, supplier_id: Optional[str], count: int, tag: str) -> Tuple[List[str], int, int]:
+  """
+  /orders 를 limit=1000, offset 증가로 돌려서
+  - items.order_item_code 모으기 (디버깅용 유지)
+  - items.quantity 합산하기
+  - items.payment_amount 합산하기 (핵심)
+  Fallback: fields 로 items 가 비면 fields 제거로 재시도
+  """
+  token = get_access_token()
+  url = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
+
+  limit = 1000
+  offset = 0
+  max_offset = 15000
+
+  all_codes: List[str] = []
+  total_qty = 0
+  inline_gross = Decimal(0)
+  fetched = 0
+
+  while fetched < count and offset <= max_offset:
+    to_fetch = min(limit, count - fetched)
+    params = {
+      "start_date": s,
+      "end_date": e,
+      "date_type": "pay_date",
+      "embed": "items",
+      "fields": "order_id,items(order_item_code,quantity)",  # 1차: 가벼운 응답
+      "limit": to_fetch,
+      "offset": offset,
+    }
+    if supplier_id:
+      params["supplier_id"] = supplier_id
+
+    r = _safe_get(url, params, token, tag=tag)
+    data = r.json() or {}
+    orders = data.get("orders") or []
+    print(f"[sales:{tag}] LIST got={len(orders)} offset={offset}")
+
+    # 기본 소스는 1차 응답
+    orders_src = orders
+
+    # 1차 응답에서 items 스캔
+    got_codes, got_qty = _scan_items(orders)
+    if got_codes == 0:
+      # ✔ 폴백: fields 제거로 재호출
+      print(f"[sales:{tag}] items missing → fallback WITHOUT fields")
+      fb = {
+        "start_date": s, "end_date": e, "date_type": "pay_date",
+        "embed": "items", "limit": to_fetch, "offset": offset
+      }
+      if supplier_id:
+        fb["supplier_id"] = supplier_id
+      r2 = _safe_get(url, fb, token, tag=tag)
+      d2 = r2.json() or {}
+      orders2 = d2.get("orders") or []
+      got_codes, got_qty = _scan_items(orders2)
+      orders_src = orders2  # 🔧 핵심: 폴백 응답을 소스로 사용
+
+    # ✅ 코드/수량 수집
+    all_codes.extend([c for c in _iter_item_codes(orders_src)])
+    total_qty += got_qty
+
+    # ✅ 금액 집계: items.payment_amount 우선, 없으면 보정 계산
+    for o in orders_src:
+      for it in (o.get("items") or []):
+        # 공급사 매치: supplier_id / supply_id / supplier_code 중 하나라도 같으면 포함
+        sid = it.get("supplier_id") or it.get("supply_id") or it.get("supplier_code")
+        if supplier_id and sid and str(sid) != str(supplier_id):
+          continue
+
+        pay = it.get("payment_amount")
+        if pay is None:
+          # 보정: (상품가+옵션가-할인들) * 수량
+          base = _to_dec(it.get("product_price")) + _to_dec(it.get("option_price"))
+          disc = _to_dec(it.get("additional_discount_price")) + _to_dec(it.get("coupon_discount_price")) + _to_dec(it.get("app_item_discount_amount"))
+          qty = _to_int(it.get("quantity"))
+          pay = (base - disc) * qty
+        inline_gross += _to_dec(pay)
+
+    fetched += len(orders)
+    if len(orders) < to_fetch:
+      break
+    offset += len(orders)
+    if offset > max_offset:
+      print(f"[sales:{tag}] WARNING offset>15000, remaining orders will be skipped")
+      break
+
+  print(f"[sales:{tag}] COLLECT items codes={len(all_codes)} qty={total_qty} inline_gross={int(inline_gross)}")
+  return all_codes, total_qty, int(inline_gross)
+
+
+def _scan_items(orders: List[Dict[str, Any]]) -> Tuple[int, int]:
+  """주문 리스트에서 items 수량/코드 스캔 (로그 집계용 리턴)"""
+  codes = 0; qty_sum = 0
+  for o in orders:
+    its = o.get("items") or []
+    for it in its:
+      if it.get("order_item_code"):
+        codes += 1
+      qty_sum += _to_int(it.get("quantity"))
+  return codes, qty_sum
+
+
+def _iter_item_codes(orders: List[Dict[str, Any]]):
+  for o in orders:
+    its = o.get("items") or []
+    for it in its:
+      code = it.get("order_item_code")
+      if code:
+        yield str(code)

@@ -1,8 +1,9 @@
 # application/src/service/slack_commands.py
 from flask import Blueprint, request, jsonify, make_response, current_app
-from datetime import datetime
+from datetime import datetime, date
 import requests, threading, traceback, json
 from typing import Optional
+
 from application.src.service.slack_verify import verify_slack_request
 from application.src.service.sales_service import fetch_sales_summary, first_day_of_month, fetch_order_list
 from application.src.repositories.SupplierListRepository import SupplierListRepository
@@ -19,6 +20,7 @@ def _fmt_currency(value):
 
 def _post_to_response_url(response_url: str, payload: dict):
   try:
+    print(f"[slash] POST response_url payload_keys={list(payload.keys())}")
     requests.post(response_url, json=payload, timeout=10)
   except Exception:
     traceback.print_exc()
@@ -39,6 +41,19 @@ def _build_result_blocks(title: str, orders: int, gross: int, net: Optional[int]
     { "type": "section", "text": { "type": "mrkdwn", "text": "\n".join(lines) } }
   ]
 
+def _resolve_supplier_code_by_channel(channel_id: str) -> Optional[str]:
+  """
+  채널ID로 공급사 찾기
+  - 반드시 supplier.supplierCode 사용 (요청 사항)
+  """
+  try:
+    supplier = SupplierListRepository.find_by_channel_id(channel_id)
+    if supplier and getattr(supplier, "supplierCode", None):
+      return supplier.supplierCode
+  except Exception as e:
+    print(f"[slash:/sales] resolve supplierCode error: {e}")
+  return None
+
 def _worker_compute_and_respond(app, form: dict):
   """
   백그라운드 스레드: 반드시 app.app_context() 안에서 DB 호출
@@ -47,23 +62,26 @@ def _worker_compute_and_respond(app, form: dict):
     response_url = form.get("response_url")
     channel_id = form.get("channel_id")
     channel_name = form.get("channel_name")
+    user_id = form.get("user_id")
+
+    print(f"[slash:/sales] user={user_id} channel={channel_name}({channel_id})")
 
     # 채널ID로 공급사 찾기 (없으면 전체 집계)
-    supplier = SupplierListRepository.find_by_channel_id(channel_id) if channel_id else None
-    supply_id = None
-    if supplier:
-      print(f"[SlashCommand] channel={channel_name} ({channel_id}) → "
-            f"공급사: {supplier.companyName}, 담당자: {supplier.manager}, 이메일: {supplier.email}")
-      supply_id = supplier.supplierCode
+    supplier_code = _resolve_supplier_code_by_channel(channel_id) if channel_id else None
+    if supplier_code:
+      print(f"[slash:/sales] supplierCode={supplier_code}")
     else:
-      print(f"[SlashCommand] channel={channel_name} ({channel_id}) → 공급사 매핑 없음")
+      print(f"[slash:/sales] supplier mapping not found for channel={channel_id}")
 
     today = datetime.now().date()
     start = first_day_of_month(today)
     end = today
+    print(f"[slash:/sales] period {start} ~ {end}")
 
     try:
-      summary = fetch_sales_summary(start, end, supply_id=supply_id)
+      # supply_id ← supplierCode를 그대로 전달
+      summary = fetch_sales_summary(start, end, supply_id=supplier_code)
+      print(f"[slash:/sales] summary={summary}")
 
       title = f"이번 달 매출 요약 ({start.isoformat()} ~ {end.isoformat()})"
       blocks = _build_result_blocks(
@@ -73,7 +91,6 @@ def _worker_compute_and_respond(app, form: dict):
         net=summary.get("net_amount"),
         items=summary.get("items"),
       )
-
       if response_url:
         _post_to_response_url(response_url, {
           "response_type": "ephemeral",
@@ -96,18 +113,19 @@ def slash_sales():
 
   form = request.form or {}
   response_url = form.get("response_url")
+  print(f"[slash:/sales] form_keys={list(form.keys())}")
 
-  # 3초 제한 대응: 즉시 ACK
   ack = {
     "response_type": "ephemeral",
     "text": "매출을 조회하는 중입니다… 잠시만 기다려 주세요 :hourglass_flowing_sand:"
   }
 
   if response_url:
-    # ★ 앱 객체를 스레드로 전달하고, 그 안에서 app.app_context() 사용
     app_obj = current_app._get_current_object()
     t = threading.Thread(target=_worker_compute_and_respond, args=(app_obj, form), daemon=True)
     t.start()
+  else:
+    print("[slash:/sales] response_url missing -> cannot update message asynchronously")
 
   return jsonify(ack)
 
@@ -119,23 +137,29 @@ def slash_sales_detail():
   form = request.form or {}
   channel_id = form.get("channel_id")
   channel_name = form.get("channel_name")
+  user_id = form.get("user_id")
 
-  supplier = None
-  supply_id = None
+  print(f"[slash:/sales_detail] user={user_id} channel={channel_name}({channel_id})")
+
+  supplier_code = None
   if channel_id:
     supplier = SupplierListRepository.find_by_channel_id(channel_id)
-    if supplier:
-      # 주의: 레거시 코드에 supplier.supplierID/Code 혼재 → 실제 모델에 맞춰 사용
-      # 이 프로젝트에선 주문 필터에 쓰는 supply_id는 'supplierID'가 맞는 것으로 보입니다.
-      supply_id = supplier.supplierCode
+    if supplier and getattr(supplier, "supplierCode", None):
+      supplier_code = supplier.supplierCode
+      print(f"[slash:/sales_detail] supplierCode={supplier_code}")
+    else:
+      print("[slash:/sales_detail] supplier mapping not found")
 
   today = datetime.now().date()
   start = first_day_of_month(today)
   end = today
+  print(f"[slash:/sales_detail] period {start} ~ {end}")
 
   try:
-    orders = fetch_order_list(start, end, supply_id=supply_id)
+    orders = fetch_order_list(start, end, supply_id=supplier_code)
+    print(f"[slash:/sales_detail] fetched orders={len(orders)}")
   except Exception as e:
+    traceback.print_exc()
     return jsonify({
       "response_type": "ephemeral",
       "text": f":x: 오류가 발생해 */매출상세* 조회에 실패했습니다.\n{e}"
@@ -147,7 +171,6 @@ def slash_sales_detail():
       "text": f"이번 달 주문 내역이 없습니다. ({start} ~ {end})"
     })
 
-  # ---- 페이지네이션: 처음엔 0~9만 노출
   page_size = 10
   offset = 0
   slice_orders = orders[offset:offset+page_size]
@@ -175,12 +198,11 @@ def slash_sales_detail():
     })
     blocks.append({ "type": "divider" })
 
-  # 더보기 버튼(남은 데이터가 있을 때만)
   if len(orders) > page_size:
     cursor = {
       "start": start.isoformat(),
       "end": end.isoformat(),
-      "supply_id": supply_id,
+      "supply_id": supplier_code,
       "offset": page_size,
       "page_size": page_size
     }
@@ -203,20 +225,22 @@ def slash_sales_detail():
 
 @slack_commands.route("/interactive", methods=["POST"])
 def interactive():
-  # 슬랙 interactivity 엔드포인트
   if not verify_slack_request(request):
     return make_response("invalid signature", 401)
 
   payload_raw = request.form.get("payload")
   if not payload_raw:
+    print("[interactive] payload missing")
     return jsonify({})
 
   payload = json.loads(payload_raw)
   action = (payload.get("actions") or [{}])[0]
   action_id = action.get("action_id")
   response_url = payload.get("response_url")
+  print(f"[interactive] action_id={action_id}")
 
   if action_id != "sales_detail_more":
+    print("[interactive] unsupported action_id")
     return jsonify({})
 
   try:
@@ -226,15 +250,14 @@ def interactive():
     supply_id = cursor.get("supply_id")
     offset = int(cursor.get("offset", 0))
     page_size = int(cursor.get("page_size", 10))
+    print(f"[interactive] cursor start={start} end={end} supply_id={supply_id} offset={offset} size={page_size}")
 
-    # 문자열 → date
-    from datetime import date
-    def _to_date(s): 
-      y, m, d = [int(x) for x in s.split("-")]
-      return date(y, m, d)
+    from datetime import date as _D
+    def _to_date(s): y, m, d = [int(x) for x in s.split("-")]; return _D(y, m, d)
 
     orders = fetch_order_list(_to_date(start), _to_date(end), supply_id=supply_id)
     next_slice = orders[offset:offset+page_size]
+    print(f"[interactive] next_slice={len(next_slice)} / total={len(orders)}")
 
     more_blocks = []
     for o in next_slice:
@@ -255,7 +278,6 @@ def interactive():
       })
       more_blocks.append({ "type": "divider" })
 
-    # 다음 페이지가 더 있으면 버튼 유지, 없으면 버튼 제거
     new_offset = offset + page_size
     if new_offset < len(orders):
       next_cursor = {
@@ -277,7 +299,6 @@ def interactive():
         ]
       })
 
-    # 원본 메시지를 유지하면서 아래에 새 블록을 "추가" (in_channel로도 가능)
     _post_to_response_url(response_url, {
       "response_type": "ephemeral",
       "replace_original": False,
@@ -292,5 +313,4 @@ def interactive():
         "text": ":warning: 더보기 처리 중 오류가 발생했습니다."
       })
 
-  # 200 OK 즉시
   return jsonify({})
