@@ -1,53 +1,41 @@
 # application/src/service/sales_service.py
 # -*- coding: utf-8 -*-
 """
-/sales 집계 로직 (Count → Orders 페이징 → items.payment_amount 합산)
-- supplier_id: 채널 매핑에서 받은 supplierCode 를 그대로 전달
-- 주문건수: /api/v2/admin/orders/count 의 count
-- 총매출: /api/v2/admin/orders?embed=items 의 items.payment_amount 합산
-- 정산예상: 총매출 * 0.85 (원단위 반올림)
-- 판매수량: items.quantity 합
-- print 로그 촘촘히 포함
+/sales 집계 로직
+- 주문단위 배송비가 0 → '취소주문', 그 외 → '판매주문' (정산 로직과 동일 기준)
+- 총매출: 전체 품목 결제금액 합
+- 취소매출: '취소주문'의 품목 결제금액 합
+- 판매매출: 총매출 - 취소매출
+- 배송비: 비취소(canceled=F) 주문의 주문당 배송비 합
+- 수수료: 판매매출 * 15% (환경변수 SETTLEMENT_COMMISSION_RATE)
+- 정산금액: 판매매출 - 수수료 + 배송비
+- 수량: 총/판매/취소 품목 수량
+- date_type: CAFE24_DATE_TYPE (기본 'order_date')
 """
-
 import os
 import time
 from typing import Dict, Any, List, Tuple, Optional, Iterable
-from decimal import Decimal, InvalidOperation
-from datetime import date, datetime
+from decimal import Decimal
+from datetime import date
 import requests
 
 from application.src.service.cafe24_oauth_service import get_access_token
 
 CAFE24_BASE_URL = os.getenv("CAFE24_BASE_URL", "").rstrip("/")
+COMMISSION_RATE = float(os.getenv("SETTLEMENT_COMMISSION_RATE", "0.15"))
+DATE_TYPE = os.getenv("CAFE24_DATE_TYPE", "order_date")  # "pay_date" 가능
 
 
 # -------------------- 유틸 --------------------
 def _to_dec(v) -> Decimal:
-  if v is None:
-    return Decimal(0)
-  try:
-    return Decimal(str(v))
-  except Exception:
-    return Decimal(0)
+  if v is None: return Decimal(0)
+  try: return Decimal(str(v))
+  except Exception: return Decimal(0)
 
 def _to_int(v) -> int:
-  if v is None:
-    return 0
-  try:
-    return int(Decimal(str(v)))
-  except Exception:
-    return 0
-
-def _chunked(it: Iterable[Any], size: int) -> Iterable[List[Any]]:
-  buf: List[Any] = []
-  for x in it:
-    buf.append(x)
-    if len(buf) >= size:
-      yield buf
-      buf = []
-  if buf:
-    yield buf
+  if v is None: return 0
+  try: return int(Decimal(str(v)))
+  except Exception: return 0
 
 def _safe_get(url: str, params: Dict[str, Any], token: str, tries: int = 6, tag: str = "-") -> requests.Response:
   for i in range(1, tries + 1):
@@ -56,79 +44,119 @@ def _safe_get(url: str, params: Dict[str, Any], token: str, tries: int = 6, tag:
       r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=25)
       if r.status_code == 429:
         ra = int(r.headers.get("Retry-After", "1"))
-        wait = max(1, ra)
-        print(f"[sales:{tag}] 429 Too Many Requests → sleep {wait}s")
-        time.sleep(wait); continue
+        time.sleep(max(1, ra)); continue
       r.raise_for_status()
       print(f"[sales:{tag}] OK {url} status={r.status_code} bytes={len(r.content)}")
       return r
     except Exception as e:
       print(f"[sales:{tag}] ERROR {url} ({e})")
-      if i == tries:
-        raise
+      if i == tries: raise
       time.sleep(1.2 * i)
   raise RuntimeError(f"[sales:{tag}] GET exhausted: {url}")
 
-
-# -------------------- 공개 함수 --------------------
 def first_day_of_month(today: date) -> date:
   return today.replace(day=1)
 
+# 주문 단위 배송비 (dict/list 모두 지원)
+def _order_shipping_fee(order: Dict[str, Any]) -> int:
+  sfd = order.get("shipping_fee_detail")
+  if isinstance(sfd, dict):
+    return _to_int(sfd.get("shipping_fee") or sfd.get("total_shipping_fee") or order.get("shipping_fee"))
+  if isinstance(sfd, list):
+    total = 0
+    for x in sfd:
+      if isinstance(x, dict):
+        total += _to_int(x.get("shipping_fee") or x.get("total_shipping_fee"))
+    return total or _to_int(order.get("shipping_fee"))
+  return _to_int(order.get("shipping_fee"))
 
+
+# -------------------- 공개 함수 --------------------
 def fetch_sales_summary(start_date: date, end_date: date, supply_id: Optional[str] = None) -> Dict[str, Any]:
   """
   /sales 에서 사용.
-  - supply_id: 채널에서 가져온 supplierCode (없으면 전체 집계)
-  - 반환: {"orders":int, "gross_amount":int, "net_amount":int, "items":int}
+  반환:
+    {
+      "orders":int, "orders_sold":int, "orders_canceled":int,
+      "gross_amount":int, "cancel_amount":int, "sale_amount":int,
+      "shipping_amount":int, "commission_amount":int, "net_amount":int,
+      "items":int, "items_sold":int, "items_canceled":int
+    }
   """
   tag = hex(abs(hash(f"{start_date}-{end_date}-{supply_id}-{time.time()}")))[2:10]
-  s = start_date.isoformat()
-  e = end_date.isoformat()
+  s = start_date.isoformat(); e = end_date.isoformat()
   print(f"[sales:{tag}] fetch_sales_summary {s}~{e} supplier_id={supply_id}")
 
-  # 1) 주문 수
+  token = get_access_token()
+
+  # 1) 총 주문 수(페이지 계획용)
   orders_count = _fetch_orders_count(s, e, supply_id, tag)
   print(f"[sales:{tag}] COUNT result={orders_count}")
   if orders_count == 0:
-    summary = {"orders": 0, "gross_amount": 0, "net_amount": 0, "items": 0}
+    summary = {
+      "orders": 0, "orders_sold": 0, "orders_canceled": 0,
+      "gross_amount": 0, "cancel_amount": 0, "sale_amount": 0,
+      "shipping_amount": 0, "commission_amount": 0, "net_amount": 0,
+      "items": 0, "items_sold": 0, "items_canceled": 0
+    }
     print(f"[sales:{tag}] SUMMARY {summary}")
     return summary
 
-  # 2) 주문 목록 페이징으로 품목코드/수량/금액 수집 (items.payment_amount 사용)
-  _, total_qty, inline_gross = _collect_items_from_orders(s, e, supply_id, orders_count, tag)
+  # 2) 주문/아이템 스캔(한 번에 총/취소/판매/수량/주문수까지 계산)
+  scan = _collect_items_from_orders(s, e, supply_id, orders_count, tag)
+  gross = int(scan["gross"])
+  cancel_amount = int(scan["cancel_gross"])
+  sale_amount = max(gross - cancel_amount, 0)
 
-  # 3) 정산예상 = 85%
-  gross = int(inline_gross)
-  net = int((Decimal(gross) * Decimal("0.85")).quantize(Decimal("1.")))
+  # 3) 배송비(비취소 주문만, 주문당 1회)
+  shipping_amount = _sum_shipping_amount(s, e, supply_id, tag)
+
+  # 4) 수수료/정산금액
+  commission_amount = int(round(sale_amount * COMMISSION_RATE))
+  net = sale_amount - commission_amount + shipping_amount
 
   summary = {
-    "orders": int(orders_count),
-    "gross_amount": gross,
-    "net_amount": net,
-    "items": int(total_qty),
+    "orders": scan["orders_total"],
+    "orders_sold": scan["orders_sold"],
+    "orders_canceled": scan["orders_canceled"],
+
+    "gross_amount": max(gross, 0),
+    "cancel_amount": max(cancel_amount, 0),
+    "sale_amount": max(sale_amount, 0),
+
+    "shipping_amount": max(int(shipping_amount), 0),
+    "commission_amount": max(int(commission_amount), 0),
+    "net_amount": max(int(net), 0),
+
+    "items": scan["qty_total"],
+    "items_sold": scan["qty_sold"],
+    "items_canceled": scan["qty_canceled"],
   }
   print(f"[sales:{tag}] SUMMARY {summary}")
   return summary
+
 
 # -------------------- 내부 구현 --------------------
 def _fetch_orders_count(s: str, e: str, supplier_id: Optional[str], tag: str) -> int:
   token = get_access_token()
   url = f"{CAFE24_BASE_URL}/api/v2/admin/orders/count"
-  params = {"start_date": s, "end_date": e, "date_type": "order_date"}
-  if supplier_id:
-    params["supplier_id"] = supplier_id
+  params = {"start_date": s, "end_date": e, "date_type": DATE_TYPE}
+  if supplier_id: params["supplier_id"] = supplier_id
   r = _safe_get(url, params, token, tag=tag)
   payload = r.json() or {}
   return int(payload.get("count", 0))
 
 
-def _collect_items_from_orders(s: str, e: str, supplier_id: Optional[str], count: int, tag: str) -> Tuple[List[str], int, int]:
+def _collect_items_from_orders(
+  s: str, e: str, supplier_id: Optional[str], count: int, tag: str
+) -> Dict[str, int]:
   """
-  /orders 를 limit=1000, offset 증가로 돌려서
-  - items.order_item_code 모으기 (디버깅용 유지)
-  - items.quantity 합산하기
-  - items.payment_amount 합산하기 (핵심)
-  Fallback: fields 로 items 가 비면 fields 제거로 재시도
+  /orders 페이징 순회
+  - 주문단위 배송비 0 → 취소주문, 그 외 → 판매주문
+  - items.payment_amount 합산: gross / cancel_gross (주문 분류에 따라)
+  - 수량 합산: qty_total / qty_sold / qty_canceled
+  - 주문수: orders_sold / orders_canceled (해당 공급사 품목이 1개라도 포함된 주문만 카운트)
+  * fields 사용, 누락/빈아이템이면 fields 제거 폴백
   """
   token = get_access_token()
   url = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
@@ -137,99 +165,154 @@ def _collect_items_from_orders(s: str, e: str, supplier_id: Optional[str], count
   offset = 0
   max_offset = 15000
 
-  all_codes: List[str] = []
-  total_qty = 0
-  inline_gross = Decimal(0)
-  fetched = 0
+  qty_total = qty_sold = qty_canceled = 0
+  gross = Decimal(0)
+  cancel_gross = Decimal(0)
 
+  seen_sold = set()
+  seen_canceled = set()
+
+  item_fields = ",".join([
+    "order_item_code","quantity","payment_amount",
+    "product_price","option_price","additional_discount_price",
+    "coupon_discount_price","app_item_discount_amount",
+    "supplier_id","supply_id","supplier_code","owner_code"
+  ])
+  base_params = {
+    "start_date": s, "end_date": e, "date_type": DATE_TYPE,
+    "embed": "items",
+    "fields": f"order_id,shipping_fee,shipping_fee_detail,items({item_fields})"
+  }
+  if supplier_id: base_params["supplier_id"] = supplier_id
+
+  fetched = 0
   while fetched < count and offset <= max_offset:
     to_fetch = min(limit, count - fetched)
-    params = {
-      "start_date": s,
-      "end_date": e,
-      "date_type": "order_date",
-      "embed": "items",
-      "fields": "order_id,items(order_item_code,quantity)",  # 1차: 가벼운 응답
-      "limit": to_fetch,
-      "offset": offset,
-    }
-    if supplier_id:
-      params["supplier_id"] = supplier_id
+    params = dict(base_params); params.update({"limit": to_fetch, "offset": offset})
 
     r = _safe_get(url, params, token, tag=tag)
     data = r.json() or {}
     orders = data.get("orders") or []
     print(f"[sales:{tag}] LIST got={len(orders)} offset={offset}")
 
-    # 기본 소스는 1차 응답
-    orders_src = orders
+    # 폴백 조건: 주문 없음 or 배치 아이템 합 0 or 배송비/결제액 필드 부족
+    batch_items_count = sum(len(o.get("items") or []) for o in orders)
+    need_fallback = (not orders) or (batch_items_count == 0)
+    if not need_fallback and orders:
+      smp = orders[0]; smp_items = (smp.get("items") or [])
+      if ("shipping_fee" not in smp and "shipping_fee_detail" not in smp) \
+         or (smp_items and ("payment_amount" not in smp_items[0])):
+        need_fallback = True
 
-    # 1차 응답에서 items 스캔
-    got_codes, got_qty = _scan_items(orders)
-    if got_codes == 0:
-      # ✔ 폴백: fields 제거로 재호출
-      print(f"[sales:{tag}] items missing → fallback WITHOUT fields")
+    if need_fallback:
+      print(f"[sales:{tag}] items/shipfee missing or empty({batch_items_count}) → fallback WITHOUT fields")
       fb = {
-        "start_date": s, "end_date": e, "date_type": "order_date",
+        "start_date": s, "end_date": e, "date_type": DATE_TYPE,
         "embed": "items", "limit": to_fetch, "offset": offset
       }
-      if supplier_id:
-        fb["supplier_id"] = supplier_id
+      if supplier_id: fb["supplier_id"] = supplier_id
       r2 = _safe_get(url, fb, token, tag=tag)
       d2 = r2.json() or {}
-      orders2 = d2.get("orders") or []
-      got_codes, got_qty = _scan_items(orders2)
-      orders_src = orders2  # 🔧 핵심: 폴백 응답을 소스로 사용
+      orders_src = d2.get("orders") or []
+    else:
+      orders_src = orders
 
-    # ✅ 코드/수량 수집
-    all_codes.extend([c for c in _iter_item_codes(orders_src)])
-    total_qty += got_qty
-
-    # ✅ 금액 집계: items.payment_amount 우선, 없으면 보정 계산
+    # 집계
     for o in orders_src:
+      shipfee = _order_shipping_fee(o)
+      is_canceled_order = (_to_int(shipfee) == 0)
+
+      order_has_supplier_item = False
+
       for it in (o.get("items") or []):
-        # 공급사 매치: supplier_id / supply_id / supplier_code 중 하나라도 같으면 포함
-        sid = it.get("supplier_id") or it.get("supply_id") or it.get("supplier_code")
+        sid = it.get("supplier_id") or it.get("supply_id") or it.get("supplier_code") or it.get("owner_code")
         if supplier_id and sid and str(sid) != str(supplier_id):
           continue
 
+        order_has_supplier_item = True
+
+        qty = _to_int(it.get("quantity"))
+        qty_total += qty
+
         pay = it.get("payment_amount")
         if pay is None:
-          # 보정: (상품가+옵션가-할인들) * 수량
           base = _to_dec(it.get("product_price")) + _to_dec(it.get("option_price"))
           disc = _to_dec(it.get("additional_discount_price")) + _to_dec(it.get("coupon_discount_price")) + _to_dec(it.get("app_item_discount_amount"))
-          qty = _to_int(it.get("quantity"))
           pay = (base - disc) * qty
-        inline_gross += _to_dec(pay)
 
-    fetched += len(orders)
-    if len(orders) < to_fetch:
-      break
-    offset += len(orders)
+        gross += _to_dec(pay)
+
+        if is_canceled_order:
+          qty_canceled += qty
+          cancel_gross += _to_dec(pay)
+        else:
+          qty_sold += qty
+
+      # 주문 카운트(해당 공급사 품목이 하나라도 있던 주문만)
+      if order_has_supplier_item:
+        oid = o.get("order_id")
+        if is_canceled_order:
+          seen_canceled.add(oid)
+        else:
+          seen_sold.add(oid)
+
+    fetched += len(orders_src)
+    if len(orders_src) < to_fetch: break
+    offset += len(orders_src)
     if offset > max_offset:
       print(f"[sales:{tag}] WARNING offset>15000, remaining orders will be skipped")
       break
 
-  print(f"[sales:{tag}] COLLECT items codes={len(all_codes)} qty={total_qty} inline_gross={int(inline_gross)}")
-  return all_codes, total_qty, int(inline_gross)
+  result = {
+    "orders_sold": len(seen_sold),
+    "orders_canceled": len(seen_canceled),
+    "orders_total": len(seen_sold) + len(seen_canceled),
+
+    "qty_total": qty_total,
+    "qty_sold": qty_sold,
+    "qty_canceled": qty_canceled,
+
+    "gross": int(gross),
+    "cancel_gross": int(cancel_gross),
+  }
+  print(f"[sales:{tag}] COLLECT {result}")
+  return result
 
 
-def _scan_items(orders: List[Dict[str, Any]]) -> Tuple[int, int]:
-  """주문 리스트에서 items 수량/코드 스캔 (로그 집계용 리턴)"""
-  codes = 0; qty_sum = 0
-  for o in orders:
-    its = o.get("items") or []
-    for it in its:
-      if it.get("order_item_code"):
-        codes += 1
-      qty_sum += _to_int(it.get("quantity"))
-  return codes, qty_sum
+def _sum_shipping_amount(s: str, e: str, supplier_id: Optional[str], tag: str) -> int:
+  """비취소(canceled=F) 주문의 주문당 배송비 합"""
+  token = get_access_token()
+  # count
+  cnt_url = f"{CAFE24_BASE_URL}/api/v2/admin/orders/count"
+  cnt_params = {"start_date": s, "end_date": e, "date_type": DATE_TYPE, "canceled": "F"}
+  if supplier_id: cnt_params["supplier_id"] = supplier_id
+  r_cnt = _safe_get(cnt_url, cnt_params, token, tag=tag)
+  total = _to_int((r_cnt.json() or {}).get("count"))
 
+  if total == 0:
+    print(f"[sales:{tag}] SHIP no orders")
+    return 0
 
-def _iter_item_codes(orders: List[Dict[str, Any]]):
-  for o in orders:
-    its = o.get("items") or []
-    for it in its:
-      code = it.get("order_item_code")
-      if code:
-        yield str(code)
+  url = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
+  limit = 1000
+  offset = 0
+  acc = 0
+
+  while offset < total:
+    to_fetch = min(limit, total - offset)
+    params = {
+      "start_date": s, "end_date": e, "date_type": DATE_TYPE,
+      "canceled": "F", "limit": to_fetch, "offset": offset
+    }
+    if supplier_id: params["supplier_id"] = supplier_id
+
+    r = _safe_get(url, params, token, tag=tag)
+    orders = (r.json() or {}).get("orders") or []
+    for o in orders:
+      acc += _order_shipping_fee(o)
+
+    offset += len(orders)
+    if len(orders) < to_fetch: break
+
+  print(f"[sales:{tag}] SHIP_AMOUNT total={acc}")
+  return int(acc)

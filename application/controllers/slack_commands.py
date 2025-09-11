@@ -1,15 +1,14 @@
-# -*- coding: utf-8 -*-
 # application/controllers/slack_commands.py
-
+# -*- coding: utf-8 -*-
 from flask import Blueprint, request, jsonify, make_response, current_app
-from datetime import datetime, date
+from datetime import datetime
 import requests, threading, traceback, json, os
 from typing import Optional
 
 from slack_sdk import WebClient
 
 from application.src.service.slack_verify import verify_slack_request
-from application.src.service.sales_service import fetch_sales_summary, first_day_of_month, fetch_order_list
+from application.src.service.sales_service import fetch_sales_summary, first_day_of_month
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 from application.src.service.settlement_service import make_settlement_excel, prev_month_range
 
@@ -33,11 +32,6 @@ def _post_to_response_url(response_url: str, payload: dict):
     traceback.print_exc()
 
 def _parse_period_text(text: str):
-  """
-  'YYYY-MM-DD~YYYY-MM-DD' 형태를 파싱해서 (start_date, end_date) 반환.
-  실패하면 None 반환.
-  공백 허용: 'YYYY-MM-DD ~ YYYY-MM-DD'
-  """
   if not text:
     return None
   try:
@@ -52,27 +46,54 @@ def _parse_period_text(text: str):
     return None
 
 # -------------------- /sales --------------------
-def _build_result_blocks(title: str, orders: int, gross: int, net: Optional[int], items: Optional[int]):
-  lines = [
-    f"*주문건수:* {orders}건",
-    f"*총매출:* {_fmt_currency(gross)}"
-  ]
-  if net is not None:
-    lines.append(f"*정산예상:* {_fmt_currency(net)}")
-  if items is not None:
-    lines.append(f"*판매수량:* {items}개")
+def _build_result_blocks(title: str, s: dict):
+  """
+  s: fetch_sales_summary 반환 dict
+  출력 구성:
+  - 주문 요약
+  - 매출 요약
+  - 수수료/정산
+  - 수량 요약
+  """
+  header = { "type": "section", "text": { "type": "mrkdwn", "text": f"*{title}*" } }
+  div = { "type": "divider" }
+
+  orders_lines = "\n".join([
+    f"• *총주문:* {s.get('orders',0)}건",
+    f"• *판매주문:* {s.get('orders_sold',0)}건",
+    f"• *취소주문:* {s.get('orders_canceled',0)}건",
+  ])
+
+  sales_lines = "\n".join([
+    f"• *총매출:* {_fmt_currency(s.get('gross_amount',0))}",
+    f"• *취소매출:* {_fmt_currency(s.get('cancel_amount',0))}",
+    f"• *판매매출:* {_fmt_currency(s.get('sale_amount',0))}",
+  ])
+
+  settle_lines = "\n".join([
+    f"• *배송비:* {_fmt_currency(s.get('shipping_amount',0))}",
+    f"• *수수료(15%):* {_fmt_currency(s.get('commission_amount',0))}",
+    f"• *정산금액:* {_fmt_currency(s.get('net_amount',0))}",
+  ])
+
+  qty_lines = "\n".join([
+    f"• *총판매수량:* {s.get('items',0)}개",
+    f"• *판매수량:* {s.get('items_sold',0)}개",
+    f"• *취소수량:* {s.get('items_canceled',0)}개",
+  ])
 
   return [
-    { "type": "section", "text": { "type": "mrkdwn", "text": f"*{title}*" } },
-    { "type": "divider" },
-    { "type": "section", "text": { "type": "mrkdwn", "text": "\n".join(lines) } }
+    header, div,
+    { "type": "section", "text": { "type": "mrkdwn", "text": "*주문 요약*\n" + orders_lines } },
+    div,
+    { "type": "section", "text": { "type": "mrkdwn", "text": "*매출 요약*\n" + sales_lines } },
+    div,
+    { "type": "section", "text": { "type": "mrkdwn", "text": "*수수료/정산*\n" + settle_lines } },
+    div,
+    { "type": "section", "text": { "type": "mrkdwn", "text": "*수량 요약*\n" + qty_lines } },
   ]
 
 def _resolve_supplier_code_by_channel(channel_id: str) -> Optional[str]:
-  """
-  채널ID로 공급사 찾기
-  - 반드시 supplier.supplierCode 사용
-  """
   try:
     supplier = SupplierListRepository.find_by_channel_id(channel_id)
     if supplier and getattr(supplier, "supplierCode", None):
@@ -91,34 +112,19 @@ def _worker_compute_and_respond_sales(app, form: dict):
 
     print(f"[slash:/sales] user={user_id} channel={channel_name}({channel_id}) text={text!r}")
 
-    # 채널 → 공급사 코드
     supplier_code = _resolve_supplier_code_by_channel(channel_id) if channel_id else None
     if supplier_code:
       print(f"[slash:/sales] supplierCode={supplier_code}")
     else:
       print(f"[slash:/sales] supplier mapping not found for channel={channel_id}")
 
-    # 기간 파싱: 'YYYY-MM-DD~YYYY-MM-DD' 형식이면 해당 기간, 아니면 당월 1일~오늘
-    def _parse_period_text(s: str):
-      if not s or "~" not in s:
-        return None
-      try:
-        a, b = [x.strip() for x in s.split("~", 1)]
-        y1, m1, d1 = [int(x) for x in a.split("-")]
-        y2, m2, d2 = [int(x) for x in b.split("-")]
-        from datetime import date as _D
-        return _D(y1, m1, d1), _D(y2, m2, d2)
-      except Exception:
-        return None
-
-    today = datetime.now().date()
     parsed = _parse_period_text(text)
     if parsed:
       start, end = parsed
       title_prefix = "매출 요약"
     else:
-      start = first_day_of_month(today)
-      end = today
+      today = datetime.now().date()
+      start = first_day_of_month(today); end = today
       title_prefix = "이번 달 매출 요약"
 
     print(f"[slash:/sales] period {start} ~ {end}")
@@ -128,13 +134,8 @@ def _worker_compute_and_respond_sales(app, form: dict):
       print(f"[slash:/sales] summary={summary}")
 
       title = f"{title_prefix} ({start.isoformat()} ~ {end.isoformat()})"
-      blocks = _build_result_blocks(
-        title=title,
-        orders=summary.get("orders", 0),
-        gross=summary.get("gross_amount", 0),
-        net=summary.get("net_amount"),
-        items=summary.get("items"),
-      )
+      blocks = _build_result_blocks(title, summary)
+
       if response_url:
         _post_to_response_url(response_url, {
           "response_type": "ephemeral",
@@ -160,33 +161,17 @@ def slash_sales():
   text = (form.get("text") or "").strip()
   print(f"[slash:/sales] form_keys={list(form.keys())} text={text!r}")
 
-  # 기간 파싱 (YYYY-MM-DD~YYYY-MM-DD 지원, 공백 허용)
-  def _parse_period_text(s: str):
-    if not s or "~" not in s:
-      return None
-    try:
-      a, b = [x.strip() for x in s.split("~", 1)]
-      y1, m1, d1 = [int(x) for x in a.split("-")]
-      y2, m2, d2 = [int(x) for x in b.split("-")]
-      from datetime import date as _D
-      return _D(y1, m1, d1), _D(y2, m2, d2)
-    except Exception:
-      return None
-
-  today = datetime.now().date()
+  # ACK 메시지에 기간 표기
   parsed = _parse_period_text(text)
   if parsed:
     start, end = parsed
     ack_text = f"매출을 조회하는 중입니다… ({start} ~ {end}) :hourglass_flowing_sand:"
   else:
-    start = first_day_of_month(today)
-    end = today
+    today = datetime.now().date()
+    start = first_day_of_month(today); end = today
     ack_text = f"매출을 조회하는 중입니다… (이번 달 {start} ~ {end}) :hourglass_flowing_sand:"
 
-  ack = {
-    "response_type": "ephemeral",
-    "text": ack_text
-  }
+  ack = { "response_type": "ephemeral", "text": ack_text }
 
   if response_url:
     app_obj = current_app._get_current_object()
