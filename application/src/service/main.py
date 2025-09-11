@@ -5,9 +5,9 @@ import os, gspread
 main = Blueprint("main", __name__, url_prefix="/")
 
 # main 페이지 이동
-@main.route("/")
-def index():
-  return render_template(
-    'index.html',
-    pageName='main'
-  )
+# @main.route("/")
+# def index():
+#   return render_template(
+#     'index.html',
+#     pageName='main'
+#   )

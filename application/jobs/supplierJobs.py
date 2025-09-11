@@ -160,7 +160,7 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
             s.stateCode = 'I'
             db.session.commit()
             print(f"[{datetime.now()}] 가입 대기 유지(seq={s.seq}) email={email} (재발송 금지)")
-            break
+            continue
 
           # (B) 미가입 & 이전 상태가 'I' 아니면(최초) → 메일 1회 발송 후 I로 전환
           if not uid and prev_state != 'I':
