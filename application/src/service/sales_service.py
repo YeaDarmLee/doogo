@@ -110,67 +110,6 @@ def fetch_sales_summary(start_date: date, end_date: date, supply_id: Optional[st
   print(f"[sales:{tag}] SUMMARY {summary}")
   return summary
 
-
-def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] = None) -> List[Dict[str, Any]]:
-  """
-  /sales_detail 용 간단 리스트.
-  - supplier_id 로 필터한 주문을 날짜 구간 전체 받아서 표시용 필드만 추림
-  - order_price 가 없으면 payment_amount 로 대체
-  """
-  tag = hex(abs(hash(f"detail-{start_date}-{end_date}-{supply_id}-{time.time()}")))[2:10]
-  s = start_date.isoformat(); e = end_date.isoformat()
-  token = get_access_token()
-
-  url = f"{CAFE24_BASE_URL}/api/v2/admin/orders"
-  limit = 1000
-  offset = 0
-  max_offset = 15000
-
-  results: List[Dict[str, Any]] = []
-
-  while True:
-    params = {
-      "start_date": s,
-      "end_date": e,
-      "date_type": "order_date",
-      "limit": limit,
-      "offset": offset,
-      # 표시용 필드만 (items 불필요)
-      "fields": "order_id,order_date,order_price,payment_amount,payment_method,payment_method_name,paymethod,pg_name",
-    }
-    if supply_id:
-      params["supplier_id"] = supply_id
-
-    r = _safe_get(url, params, token, tag=tag)
-    data = r.json() or {}
-    orders = data.get("orders") or []
-    print(f"[sales:{tag}] LIST detail got={len(orders)} offset={offset}")
-
-    for o in orders:
-      pay_method = (
-        o.get("payment_method")
-        or o.get("payment_method_name")
-        or o.get("paymethod")
-        or o.get("pg_name")
-        or "-"
-      )
-      results.append({
-        "order_id": o.get("order_id"),
-        "order_date": o.get("order_date"),
-        "order_price": (o.get("order_price") or o.get("payment_amount")),
-        "payment_amount": o.get("payment_amount"),
-        "payment_method": pay_method,
-      })
-
-    got = len(orders)
-    if got < limit or offset > max_offset:
-      break
-    offset += got
-
-  print(f"[sales:{tag}] LIST detail total={len(results)}")
-  return results
-
-
 # -------------------- 내부 구현 --------------------
 def _fetch_orders_count(s: str, e: str, supplier_id: Optional[str], tag: str) -> int:
   token = get_access_token()
