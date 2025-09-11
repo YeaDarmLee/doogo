@@ -132,7 +132,7 @@ def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] 
     params = {
       "start_date": s,
       "end_date": e,
-      "date_type": "pay_date",
+      "date_type": "order_date",
       "limit": limit,
       "offset": offset,
       # 표시용 필드만 (items 불필요)
@@ -175,7 +175,7 @@ def fetch_order_list(start_date: date, end_date: date, supply_id: Optional[str] 
 def _fetch_orders_count(s: str, e: str, supplier_id: Optional[str], tag: str) -> int:
   token = get_access_token()
   url = f"{CAFE24_BASE_URL}/api/v2/admin/orders/count"
-  params = {"start_date": s, "end_date": e, "date_type": "pay_date"}
+  params = {"start_date": s, "end_date": e, "date_type": "order_date"}
   if supplier_id:
     params["supplier_id"] = supplier_id
   r = _safe_get(url, params, token, tag=tag)
@@ -208,7 +208,7 @@ def _collect_items_from_orders(s: str, e: str, supplier_id: Optional[str], count
     params = {
       "start_date": s,
       "end_date": e,
-      "date_type": "pay_date",
+      "date_type": "order_date",
       "embed": "items",
       "fields": "order_id,items(order_item_code,quantity)",  # 1차: 가벼운 응답
       "limit": to_fetch,
@@ -231,7 +231,7 @@ def _collect_items_from_orders(s: str, e: str, supplier_id: Optional[str], count
       # ✔ 폴백: fields 제거로 재호출
       print(f"[sales:{tag}] items missing → fallback WITHOUT fields")
       fb = {
-        "start_date": s, "end_date": e, "date_type": "pay_date",
+        "start_date": s, "end_date": e, "date_type": "order_date",
         "embed": "items", "limit": to_fetch, "offset": offset
       }
       if supplier_id:

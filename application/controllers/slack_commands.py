@@ -1,15 +1,22 @@
-# application/src/service/slack_commands.py
+# -*- coding: utf-8 -*-
+# application/controllers/slack_commands.py
+
 from flask import Blueprint, request, jsonify, make_response, current_app
 from datetime import datetime, date
-import requests, threading, traceback, json
+import requests, threading, traceback, json, os
 from typing import Optional
+
+from slack_sdk import WebClient
 
 from application.src.service.slack_verify import verify_slack_request
 from application.src.service.sales_service import fetch_sales_summary, first_day_of_month, fetch_order_list
 from application.src.repositories.SupplierListRepository import SupplierListRepository
+from application.src.service.settlement_service import make_settlement_excel, prev_month_range
 
 slack_commands = Blueprint("slack_commands", __name__, url_prefix="/slack/commands")
 
+
+# -------------------- 공통 유틸 --------------------
 def _fmt_currency(value):
   try:
     if value in (None, "", "None"):
@@ -25,6 +32,8 @@ def _post_to_response_url(response_url: str, payload: dict):
   except Exception:
     traceback.print_exc()
 
+
+# -------------------- /sales --------------------
 def _build_result_blocks(title: str, orders: int, gross: int, net: Optional[int], items: Optional[int]):
   lines = [
     f"*주문건수:* {orders}건",
@@ -44,7 +53,7 @@ def _build_result_blocks(title: str, orders: int, gross: int, net: Optional[int]
 def _resolve_supplier_code_by_channel(channel_id: str) -> Optional[str]:
   """
   채널ID로 공급사 찾기
-  - 반드시 supplier.supplierCode 사용 (요청 사항)
+  - 반드시 supplier.supplierCode 사용
   """
   try:
     supplier = SupplierListRepository.find_by_channel_id(channel_id)
@@ -54,10 +63,7 @@ def _resolve_supplier_code_by_channel(channel_id: str) -> Optional[str]:
     print(f"[slash:/sales] resolve supplierCode error: {e}")
   return None
 
-def _worker_compute_and_respond(app, form: dict):
-  """
-  백그라운드 스레드: 반드시 app.app_context() 안에서 DB 호출
-  """
+def _worker_compute_and_respond_sales(app, form: dict):
   with app.app_context():
     response_url = form.get("response_url")
     channel_id = form.get("channel_id")
@@ -66,7 +72,6 @@ def _worker_compute_and_respond(app, form: dict):
 
     print(f"[slash:/sales] user={user_id} channel={channel_name}({channel_id})")
 
-    # 채널ID로 공급사 찾기 (없으면 전체 집계)
     supplier_code = _resolve_supplier_code_by_channel(channel_id) if channel_id else None
     if supplier_code:
       print(f"[slash:/sales] supplierCode={supplier_code}")
@@ -79,7 +84,6 @@ def _worker_compute_and_respond(app, form: dict):
     print(f"[slash:/sales] period {start} ~ {end}")
 
     try:
-      # supply_id ← supplierCode를 그대로 전달
       summary = fetch_sales_summary(start, end, supply_id=supplier_code)
       print(f"[slash:/sales] summary={summary}")
 
@@ -122,195 +126,101 @@ def slash_sales():
 
   if response_url:
     app_obj = current_app._get_current_object()
-    t = threading.Thread(target=_worker_compute_and_respond, args=(app_obj, form), daemon=True)
+    t = threading.Thread(target=_worker_compute_and_respond_sales, args=(app_obj, form), daemon=True)
     t.start()
   else:
     print("[slash:/sales] response_url missing -> cannot update message asynchronously")
 
   return jsonify(ack)
 
-@slack_commands.route("/sales_detail", methods=["POST"])
-def slash_sales_detail():
+# -------------------- /settlement --------------------
+@slack_commands.route("/settlement", methods=["POST"])
+def slash_settlement():
   if not verify_slack_request(request):
     return make_response("invalid signature", 401)
 
   form = request.form or {}
+  response_url = form.get("response_url")
   channel_id = form.get("channel_id")
   channel_name = form.get("channel_name")
   user_id = form.get("user_id")
+  text = (form.get("text") or "").strip()
 
-  print(f"[slash:/sales_detail] user={user_id} channel={channel_name}({channel_id})")
+  print(f"[slash:/settlement] user={user_id} channel={channel_name}({channel_id}) text={text!r}")
 
-  supplier_code = None
-  if channel_id:
-    supplier = SupplierListRepository.find_by_channel_id(channel_id)
-    if supplier and getattr(supplier, "supplierCode", None):
-      supplier_code = supplier.supplierCode
-      print(f"[slash:/sales_detail] supplierCode={supplier_code}")
-    else:
-      print("[slash:/sales_detail] supplier mapping not found")
+  # 채널 → 공급사 (supplierCode 우선)
+  supplier = SupplierListRepository.find_by_channel_id(channel_id) if channel_id else None
+  supply_id = None
+  if supplier:
+    supply_id = getattr(supplier, "supplierCode", None)
+  print(f"[slash:/settlement] supplier={getattr(supplier,'companyName',None)} supply_id={supply_id}")
+
+  # 기간: 기본=지난달, 텍스트 "YYYY-MM-DD~YYYY-MM-DD" 허용
+  def _parse_period(s: str):
+    try:
+      a, b = [x.strip() for x in s.split("~")]
+      y1,m1,d1 = [int(x) for x in a.split("-")]
+      y2,m2,d2 = [int(x) for x in b.split("-")]
+      from datetime import date as _D
+      return _D(y1,m1,d1), _D(y2,m2,d2)
+    except Exception:
+      return None
 
   today = datetime.now().date()
-  start = first_day_of_month(today)
-  end = today
-  print(f"[slash:/sales_detail] period {start} ~ {end}")
+  if text and "~" in text:
+    p = _parse_period(text)
+    start, end = p if p else prev_month_range(today)
+  else:
+    start, end = prev_month_range(today)
 
-  try:
-    orders = fetch_order_list(start, end, supply_id=supplier_code)
-    print(f"[slash:/sales_detail] fetched orders={len(orders)}")
-  except Exception as e:
-    traceback.print_exc()
-    return jsonify({
-      "response_type": "ephemeral",
-      "text": f":x: 오류가 발생해 */매출상세* 조회에 실패했습니다.\n{e}"
-    })
+  print(f"[slash:/settlement] period {start} ~ {end}")
 
-  if not orders:
-    return jsonify({
-      "response_type": "ephemeral",
-      "text": f"이번 달 주문 내역이 없습니다. ({start} ~ {end})"
-    })
-
-  page_size = 10
-  offset = 0
-  slice_orders = orders[offset:offset+page_size]
-
-  blocks = [
-    { "type": "section", "text": { "type": "mrkdwn", "text": f"*이번 달 주문 상세 ({start} ~ {end})*" } },
-    { "type": "divider" }
-  ]
-
-  for o in slice_orders:
-    gross = o.get("order_price") or o.get("payment_amount")
-    net = o.get("payment_amount")
-    pay = o.get("payment_method") or "-"
-    blocks.append({
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": (
-          f"*주문ID:* {o['order_id']}\n"
-          f"*주문일시:* {o['order_date']}\n"
-          f"*총액:* {_fmt_currency(gross)} / *결제액:* {_fmt_currency(net)}\n"
-          f"*결제방식:* {pay}"
-        )
-      }
-    })
-    blocks.append({ "type": "divider" })
-
-  if len(orders) > page_size:
-    cursor = {
-      "start": start.isoformat(),
-      "end": end.isoformat(),
-      "supply_id": supplier_code,
-      "offset": page_size,
-      "page_size": page_size
-    }
-    blocks.append({
-      "type": "actions",
-      "elements": [
-        {
-          "type": "button",
-          "action_id": "sales_detail_more",
-          "text": { "type": "plain_text", "text": "더보기" },
-          "value": json.dumps(cursor)
-        }
-      ]
-    })
-
-  return jsonify({
+  ack = {
     "response_type": "ephemeral",
-    "blocks": blocks
-  })
+    "text": f"정산 파일을 생성 중입니다… ({start} ~ {end}) :hourglass_flowing_sand:"
+  }
 
-@slack_commands.route("/interactive", methods=["POST"])
-def interactive():
-  if not verify_slack_request(request):
-    return make_response("invalid signature", 401)
+  def _bg(app):
+    with app.app_context():
+      try:
+        fpath, summary = make_settlement_excel(start, end, supply_id=supply_id, out_dir="/tmp")
+        print(f"[slash:/settlement] excel_ready path={fpath} summary={summary}")
 
-  payload_raw = request.form.get("payload")
-  if not payload_raw:
-    print("[interactive] payload missing")
-    return jsonify({})
+        bot_token = os.getenv("SLACK_BOT_TOKEN")
+        cli = WebClient(token=bot_token)
 
-  payload = json.loads(payload_raw)
-  action = (payload.get("actions") or [{}])[0]
-  action_id = action.get("action_id")
-  response_url = payload.get("response_url")
-  print(f"[interactive] action_id={action_id}")
+        # 비공개 채널 대비 선참여 시도 (이미 참여 상태면 무시)
+        try:
+          cli.conversations_join(channel=channel_id)
+        except Exception:
+          pass
 
-  if action_id != "sales_detail_more":
-    print("[interactive] unsupported action_id")
-    return jsonify({})
+        initial_comment = (
+          f"*정산서 업로드 완료*\n기간: {start} ~ {end}\n"
+          f"총매출: {summary['gross_amount']:,}원 / 정산예상: {summary['net_amount']:,}원\n"
+          f"배송완료 {summary['delivered_rows']}행 · 취소처리 {summary['canceled_rows']}행"
+        )
+        cli.files_upload_v2(
+          channel=channel_id,  # 단수
+          file=fpath,
+          filename=os.path.basename(fpath),
+          title=f"{start:%Y-%m} 정산서",
+          initial_comment=initial_comment
+        )
+      except Exception as e:
+        traceback.print_exc()
+        if response_url:
+          _post_to_response_url(response_url, {
+            "response_type": "ephemeral",
+            "replace_original": False,
+            "text": f":warning: 정산 파일 생성/업로드 중 오류가 발생했습니다.\n{e}"
+          })
 
-  try:
-    cursor = json.loads(action.get("value") or "{}")
-    start = cursor.get("start")
-    end = cursor.get("end")
-    supply_id = cursor.get("supply_id")
-    offset = int(cursor.get("offset", 0))
-    page_size = int(cursor.get("page_size", 10))
-    print(f"[interactive] cursor start={start} end={end} supply_id={supply_id} offset={offset} size={page_size}")
+  if response_url:
+    app_obj = current_app._get_current_object()
+    t = threading.Thread(target=_bg, args=(app_obj,), daemon=True)
+    t.start()
+  else:
+    print("[slash:/settlement] response_url missing -> cannot update message asynchronously")
 
-    from datetime import date as _D
-    def _to_date(s): y, m, d = [int(x) for x in s.split("-")]; return _D(y, m, d)
-
-    orders = fetch_order_list(_to_date(start), _to_date(end), supply_id=supply_id)
-    next_slice = orders[offset:offset+page_size]
-    print(f"[interactive] next_slice={len(next_slice)} / total={len(orders)}")
-
-    more_blocks = []
-    for o in next_slice:
-      gross = o.get("order_price") or o.get("payment_amount")
-      net = o.get("payment_amount")
-      pay = o.get("payment_method") or "-"
-      more_blocks.append({
-        "type": "section",
-        "text": {
-          "type": "mrkdwn",
-          "text": (
-            f"*주문ID:* {o['order_id']}\n"
-            f"*주문일시:* {o['order_date']}\n"
-            f"*총액:* {_fmt_currency(gross)} / *결제액:* {_fmt_currency(net)}\n"
-            f"*결제방식:* {pay}"
-          )
-        }
-      })
-      more_blocks.append({ "type": "divider" })
-
-    new_offset = offset + page_size
-    if new_offset < len(orders):
-      next_cursor = {
-        "start": start,
-        "end": end,
-        "supply_id": supply_id,
-        "offset": new_offset,
-        "page_size": page_size
-      }
-      more_blocks.append({
-        "type": "actions",
-        "elements": [
-          {
-            "type": "button",
-            "action_id": "sales_detail_more",
-            "text": { "type": "plain_text", "text": "더보기" },
-            "value": json.dumps(next_cursor)
-          }
-        ]
-      })
-
-    _post_to_response_url(response_url, {
-      "response_type": "ephemeral",
-      "replace_original": False,
-      "blocks": more_blocks
-    })
-  except Exception:
-    traceback.print_exc()
-    if response_url:
-      _post_to_response_url(response_url, {
-        "response_type": "ephemeral",
-        "replace_original": False,
-        "text": ":warning: 더보기 처리 중 오류가 발생했습니다."
-      })
-
-  return jsonify({})
+  return jsonify(ack)

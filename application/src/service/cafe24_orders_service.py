@@ -34,6 +34,48 @@ except Exception:
 _KST = timezone('Asia/Seoul')
 SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
 
+# ─────────────────────────────────────────────────────────────
+# Cafe24 코드 치환 테이블
+#   - 이벤트 코드(event_code) 예: shipping_start, shipping_complete, purchase_confirm 등
+#   - 배송상태(shipping_status) 예: F/M/T
+# 문서 기준 대표값만 우선 반영, 필요 시 계속 확장 가능
+# ─────────────────────────────────────────────────────────────
+EVENT_CODE_MAP: Dict[str, str] = {
+  "shipping_ready": "배송준비",
+  "shipping_start": "배송시작",
+  "shipping_reject": "배송거부",
+  "shipping_delay": "배송지연",
+  "shipping_resend": "재배송",
+  "shipping_complete": "배송완료",
+  "shipping_hold": "배송보류",
+
+  # 구매/주문 관련(샘플로 자주 쓰이는 것 위주)
+  "purchase_confirm": "구매확정",
+  "order_cancel": "주문취소",
+  "order_cancel_request": "취소요청",
+  "order_exchange": "교환요청",
+  "order_return": "반품요청",
+}
+
+SHIPPING_STATUS_MAP: Dict[str, str] = {
+  "F": "배송전",   # Before shipping
+  "M": "배송중",   # On delivery
+  "T": "배송완료", # Delivered
+}
+
+def humanize_event_code(code: Optional[str]) -> str:
+  if not code:
+    return "-"
+  c = str(code).strip().lower()
+  return EVENT_CODE_MAP.get(c, code)
+
+def humanize_shipping_status(status: Optional[str]) -> str:
+  if not status:
+    return "-"
+  s = str(status).strip().upper()
+  return SHIPPING_STATUS_MAP.get(s, status)
+
+
 class Cafe24OrdersService:
   """
   Cafe24 주문 이벤트 처리:
@@ -59,6 +101,9 @@ class Cafe24OrdersService:
     raise RuntimeError("Slack client not available (SLACK_BOT_TOKEN 필요)")
 
   def _post_to_channel(self, channel_id: str, text: str):
+    if not channel_id:
+      # 방송 채널 미설정 시 안전하게 무시
+      return
     cli = self._ensure_slack_client()
     cli.chat_postMessage(channel=channel_id, text=text)
 
@@ -194,6 +239,8 @@ class Cafe24OrdersService:
     # 디버깅용: 공급사코드 표시(운영 중엔 빼도 됨)
     if meta.get("supplier_codes"):
       lines.append(f"- 공급사 코드: {meta['supplier_codes']}```")
+    else:
+      lines.append("```")
 
     return "\n".join(lines)
 
@@ -215,7 +262,7 @@ class Cafe24OrdersService:
         supplier = SupplierListRepository.findBySupplierCode(ch)
         self._post_to_channel(supplier.channelId, text)
       except Exception as e:
-        print(f"[orders.notify][fail] ch={supplier.channelId} err={e}")
+        print(f"[orders.notify][fail] ch={getattr(supplier, 'channelId', None)} err={e}")
 
   def _extract_supplier_codes(self, payload: Dict[str, Any]) -> List[str]:
     d = self._coalesce(payload)
@@ -237,15 +284,9 @@ class Cafe24OrdersService:
       pass
     return list(out)
 
+  # (이전 호환용) 이벤트 코드를 한글로
   def _map_shipping_code(self, event_code: str) -> str:
-    code = (event_code or "").lower()
-    # 필요 시 계속 확장
-    mapping = {
-      "shipping_start": "배송시작",
-      "shipping_ready": "배송준비",
-      "shipping_complete": "배송완료",
-    }
-    return mapping.get(code, event_code or "-")
+    return humanize_event_code(event_code)
 
   def notify_order_shipping_updated(self, payload: Dict[str, Any], topic: str):
     d = self._coalesce(payload)
@@ -255,16 +296,16 @@ class Cafe24OrdersService:
     shipping_status = d.get("shipping_status") or ""
     supplier_codes = self._extract_supplier_codes(payload)
 
-    # 대표 품목 간단 표시 (CSV 기반)
+    # 대표 품목 간단 표시
     items = self._extract_items(payload)
 
     # 메시지 구성
-    lines = []
+    lines: List[str] = []
     lines.append(f"*[Cafe24]* :truck: *배송상태가 변경되었습니다.*")
     lines.append(f"```- 주문번호: {meta['order_id']}")
-    lines.append(f"- 변경코드: {self._map_shipping_code(event_code)} (raw: {event_code})")
+    lines.append(f"- 업데이트 내용: {humanize_event_code(event_code)} (raw: {event_code})")
     if shipping_status:
-      lines.append(f"- 배송상태: {shipping_status}")
+      lines.append(f"- 배송상태: {humanize_shipping_status(shipping_status)} (raw: {shipping_status})")
     lines.append(f"- 주문시각: {meta['ordered_at'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
     if items:
       lines.append("- 품목:")
