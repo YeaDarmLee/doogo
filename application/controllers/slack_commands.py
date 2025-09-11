@@ -246,7 +246,6 @@ def slash_settlement():
 
         initial_comment = (
           f"*정산서 업로드 완료*\n기간: {start} ~ {end}\n"
-          f"총매출: {summary['gross_amount']:,}원 / 정산예상: {summary['net_amount']:,}원\n"
           f"배송완료 {summary['delivered_rows']}행 · 취소처리 {summary['canceled_rows']}행"
         )
         cli.files_upload_v2(
