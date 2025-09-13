@@ -31,6 +31,7 @@ _slack_client = WebClient(token=SLACK_BOT_TOKEN) if (WebClient and SLACK_BOT_TOK
 
 # stateCode semantics:
 #   None : 미처리
+#   R    : 승인 대기중
 #   P    : 작업중(락)
 #   A    : 준비 완료(채널 생성 성공 등)
 #   E    : 오류

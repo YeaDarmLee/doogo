@@ -8,7 +8,10 @@ import requests
 
 from application.src.service.slackService import client
 from application.src.repositories.SupplierListRepository import SupplierListRepository
-from application.src.service.cafe24_oauth_service import get_access_token  # ✅ OAuth 토큰 사용
+from application.src.models.SupplierList import SupplierList  # ✅ DB 저장에 필요
+
+# OAuth 토큰 유틸
+from application.src.service.cafe24_oauth_service import get_access_token
 
 logger = logging.getLogger("cafe24.boards")
 
@@ -36,8 +39,30 @@ BOARD_NAME_MAP = {
   1001: "한줄메모",
 }
 
+# 상태 코드 지정: 'R' = 승인 대기(Review)
+STATE_WAITING_REVIEW = "R"  # 승인 대기 상태(신규 지정)
+
 # 벤더 채널 프리픽스
 VENDOR_PREFIX = os.getenv("SLACK_VENDOR_PREFIX", "vendor-").strip() or "vendor-"
+
+# ---------- 유틸 ----------
+def _safe_trunc(s: Optional[str], max_len: int) -> Optional[str]:
+  if s is None:
+    return None
+  s = str(s).strip()
+  return s[:max_len] if len(s) > max_len else s
+
+def _sanitize_company_name(name: Optional[str]) -> str:
+  """
+  회사명에서 특수문자와 공백 제거 후 반환
+  """
+  if not name:
+    return ""
+  # 특수문자 제거
+  cleaned = re.sub(r"[^0-9a-zA-Z가-힣]", "", name)
+  # 공백 제거
+  cleaned = cleaned.replace(" ", "")
+  return cleaned
 
 class Cafe24BoardsService:
   def __init__(self, broadcast_env: str = "SLACK_BROADCAST_CHANNEL_ID"):
@@ -63,11 +88,8 @@ class Cafe24BoardsService:
     return f"{self.base_url}/api/v2/admin"
 
   def _auth_headers(self) -> Dict[str, str]:
-    """
-    OAuth 액세스 토큰을 가져와 Authorization 헤더 구성.
-    - 모듈 내부 캐시로 필요 시 자동 재발급됨.
-    """
-    token = get_access_token()  # 예외 발생 시 상위에서 로깅/처리
+    """OAuth 액세스 토큰을 가져와 Authorization 헤더 구성."""
+    token = get_access_token()
     return {
       "Authorization": f"Bearer {token}",
       "Content-Type": "application/json",
@@ -84,7 +106,6 @@ class Cafe24BoardsService:
     """
     GET /api/v2/admin/boards/{board_no}/articles
     - 파라미터: start_date, end_date (YYYY-MM-DD), offset(최대 8000), limit(1~100)
-    - 현재는 단건 매칭만 필요하므로 offset=0, limit=100으로 1회 조회
     """
     url = f"{self._api_base()}/boards/{board_no}/articles"
     headers = self._auth_headers()
@@ -104,9 +125,7 @@ class Cafe24BoardsService:
 
   def _pick_article(self, board_no: int, post_no: Any, run_date: datetime) -> Optional[Dict[str, Any]]:
     """
-    실행일 기준 당일(date_str)로 1회 조회(offset=0, limit=100) 후 article_no 매칭
-    - 게시물 수가 추후 100건을 넘으면, offset을 100씩 증가시켜 스캔하면 됨.
-      예) for off in range(0, 8200, 100): ...
+    실행일 기준 당일(date_str)로 조회(offset=0, limit=100) 후 article_no 매칭
     """
     day_str = run_date.strftime("%Y-%m-%d")
     fields = "article_no,title,content,created_date,member_id,writer,product_no"
@@ -143,9 +162,7 @@ class Cafe24BoardsService:
       return None
 
   def _resolve_supplier_code_from_article(self, article: Dict[str, Any]) -> Optional[str]:
-    """
-    article.product_no → 제품 단건 조회 → supplier_code(단일) 반환
-    """
+    """article.product_no → 제품 단건 조회 → supplier_code(단일) 반환"""
     raw = article.get("product_no")
     if raw is None or str(raw).strip() == "":
       return None
@@ -158,18 +175,15 @@ class Cafe24BoardsService:
   # ---------------- content cleaners ----------------
   def _html_to_text(self, html_str: str) -> str:
     """
-    가벼운 HTML → text 변환:
-    - <br>, </p>, </div> → 개행
-    - 태그 제거
-    - HTML 엔티티 언이스케이프(&nbsp; 등)
-    - 연속 공백/개행 정리
+    HTML → text 변환(경량):
+    - <br>, </p>, </div> → 개행 / 태그 제거 / 엔티티 언이스케이프 / 공백 정리
     """
     if not html_str:
       return ""
     s = html_str
-    s = re.sub(r"(?i)</p\s*>|<br\s*/?>|</div\s*>", "\n", s)  # 줄바꿈
-    s = re.sub(r"<[^>]+>", "", s)                            # 태그 제거
-    s = _html.unescape(s)                                    # 엔티티 해제
+    s = re.sub(r"(?i)</p\s*>|<br\s*/?>|</div\s*>", "\n", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = _html.unescape(s)
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     s = s.replace("\xa0", " ")
     s = re.sub(r"[ \t]+", " ", s)
@@ -177,9 +191,7 @@ class Cafe24BoardsService:
     return s.strip()
 
   def _strip_original_quote(self, text: str) -> str:
-    """
-    '[ Original Message ]' 이후 인용 블록 제거 (대소문자/공백 관대한 매칭)
-    """
+    """'[ Original Message ]' 이후 인용 블록 제거"""
     if not text:
       return ""
     m = re.search(r"\[\s*Original\s+Message\s*\]", text, flags=re.IGNORECASE)
@@ -187,19 +199,16 @@ class Cafe24BoardsService:
       return text
     return text[:m.start()].rstrip()
 
-  def _clean_qa_review_content(self, html_str: str) -> str:
-    """
-    보드 4,6(후기/Q&A) 전용: HTML→텍스트, 인용 제거
-    """
+  def _clean_qa_review_content(self, html_str: str, max_len: int = 400) -> str:
+    """보드 4,6: HTML→텍스트, 인용 제거, 길이 제한"""
     txt = self._html_to_text(html_str)
     txt = self._strip_original_quote(txt)
     txt = re.sub(r"\n{3,}", "\n\n", txt).strip()
-    return txt
+    return (txt[:max_len] + "…") if len(txt) > max_len else txt
 
   def _parse_board2_application(self, html_str: str) -> Dict[str, str]:
     """
-    보드 2(공급사 입점) 전용: <div class="item-tit">제목</div><div class="item-cont">값</div> 쌍 파싱
-    반환: {제목: 값}
+    보드 2(공급사 입점): <div class="item-tit">제목</div><div class="item-cont">값</div> 쌍 파싱 → {제목: 값}
     """
     result: Dict[str, str] = {}
     if not html_str:
@@ -217,9 +226,7 @@ class Cafe24BoardsService:
     return result
 
   def _format_board2_application(self, parsed: Dict[str, str]) -> List[str]:
-    """
-    보드 2 파싱 결과를 Slack용 라인 배열로 정리
-    """
+    """보드 2 파싱 결과를 Slack용 라인 배열로 정리"""
     fields = [
       ("회사명", "회사명"),
       ("상품 공급 유형", "상품 공급 유형"),
@@ -244,6 +251,29 @@ class Cafe24BoardsService:
     body = "\n".join(body_lines)
     return f"*{title}*\n```{body}```"
 
+  # ---------------- persistence (보드2 자동 저장) ----------------
+  def _persist_supplier_application(self, parsed: Dict[str, str]) -> Optional[SupplierList]:
+    """
+    보드 2 파싱 결과를 SupplierList로 저장(승인 대기 'R')
+    필드 길이 제약을 안전하게 잘라 저장.
+    """
+    try:
+      entity = SupplierList(
+        companyName = _safe_trunc(_sanitize_company_name(parsed.get("회사명")), 100),
+        supplierURL=_safe_trunc(parsed.get("자사몰 URL"), 255),
+        manager=_safe_trunc(parsed.get("담당자명"), 100),
+        managerRank=_safe_trunc(parsed.get("직책"), 50),
+        number=_safe_trunc(parsed.get("연락처"), 50),
+        email=_safe_trunc(parsed.get("이메일"), 255),
+        stateCode=STATE_WAITING_REVIEW,              # 'R' = 승인 대기
+      )
+      saved = SupplierListRepository.save(entity)
+      logger.info(f"[board2-save-ok] seq={saved.seq} company={saved.companyName!r} state={saved.stateCode}")
+      return saved
+    except Exception as e:
+      logger.exception(f"[board2-save-fail] err={e}")
+      return None
+
   # ---------------- main ----------------
   def notify_board_created(self, payload: Dict[str, Any], topic: str):
     try:
@@ -266,7 +296,8 @@ class Cafe24BoardsService:
       article = self._pick_article(bno, post_no, run_dt) if bno else None
 
       body_lines = [
-        f"게시물 번호: {post_no}",
+        f"Board: {board_name}",
+        f"Post No: {post_no}",
         f"작성자: {writer} ({member_id})",
       ]
 
@@ -275,34 +306,35 @@ class Cafe24BoardsService:
         created = (article.get("created_date") or "").strip()
         raw_content = (article.get("content") or "").strip()
 
-        # 보드별 content 정제
         if bno in (4, 6):
-          clean = self._clean_qa_review_content(raw_content)
-          body_lines += [
-            f"제목: {title}",
-            f"내용: {clean}" if clean else "내용: (비어 있음)",
-            f"등록일시: {created}",
-          ]
+          # Q&A/후기 정제
+          clean = self._clean_qa_review_content(raw_content, max_len=400)
+          body_lines += [f"제목: {title}", f"등록일시: {created}", f"내용: {clean}" if clean else "내용: (비어 있음)"]
+
         elif bno == 2:
+          # 공급사 입점: 파싱 + 저장(승인 대기)
           parsed = self._parse_board2_application(raw_content)
+          # 저장 시도
+          saved = self._persist_supplier_application(parsed)
           board2_lines = self._format_board2_application(parsed)
-          body_lines += [
-            f"제목: {title}",
-            f"등록일시: {created}",
-          ]
+          body_lines += [f"제목: {title}", f"등록일시: {created}"]
           body_lines += (board2_lines if board2_lines else ["내용: (입점 신청서 내용을 해석할 수 없습니다)"])
+          # 저장 결과 라인 추가(선택)
+          if saved:
+            body_lines += [f"저장 상태: 승인 대기({STATE_WAITING_REVIEW}) / seq={saved.seq}"]
+          else:
+            body_lines += ["저장 상태: 저장 실패(E)"]
+
         else:
-          # 기타 게시판: 기본 HTML→텍스트 후 200자 스니펫
+          # 기타 게시판: 기본 정제
           base = self._html_to_text(raw_content)
           snippet = (base[:200] + "…") if len(base) > 200 else base
-          body_lines += [
-            f"제목: {title}",
-            f"내용: {snippet}" if snippet else "내용: (비어 있음)",
-            f"등록일시: {created}",
-          ]
+          body_lines += [f"제목: {title}", f"등록일시: {created}", f"내용: {snippet}" if snippet else "내용: (비어 있음)"]
+
       else:
         body_lines.append("※ 게시물 상세 조회에 실패하여 웹훅 원문만 전송됨")
 
+      # 제목에 게시판명 포함
       msg_title = f":memo: [Cafe24] {board_name} 등록 알림"
       text = self._build_text(msg_title, body_lines)
 

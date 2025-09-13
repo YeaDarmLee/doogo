@@ -15,31 +15,31 @@ class SupplierList(db.Model):
   seq: Mapped[int] = mapped_column(db.Integer, primary_key=True, autoincrement=True, comment="SEQ")
 
   # 공급사 이름 (NULL 불가능)
-  companyName: Mapped[Optional[str]] = mapped_column("COMPANY_NAME", db.String(20), nullable=False, comment="공급사 이름")
+  companyName: Mapped[Optional[str]] = mapped_column("COMPANY_NAME", db.String(100), nullable=False, comment="공급사 이름")
   
   # CAFE24 공급사 코드
   supplierCode: Mapped[Optional[str]] = mapped_column("SUPPLIER_CODE", db.String(50), nullable=True, unique=True, comment="CAFE24 공급사 코드")
 
   # 공급사 ID (NULL 불가능)
-  supplierID: Mapped[Optional[str]] = mapped_column("SUPPLIER_ID", db.Integer, nullable=True, comment="공급사 ID")
+  supplierID: Mapped[Optional[str]] = mapped_column("SUPPLIER_ID", db.String(100), nullable=True, comment="공급사 ID")
 
   # 공급사 PW (NULL 불가능)
   supplierPW: Mapped[Optional[str]] = mapped_column("SUPPLIER_PW", db.String(100), nullable=True, comment="공급사 PW")
 
   # 공급사 URL (NULL 가능)
-  supplierURL: Mapped[Optional[str]] = mapped_column("SUPPLIER_URL", db.String(100), nullable=True, comment="공급사 URL")
+  supplierURL: Mapped[Optional[str]] = mapped_column("SUPPLIER_URL", db.String(255), nullable=True, comment="공급사 URL")
 
   # 담당자 이름 (NULL 가능)
-  manager: Mapped[Optional[str]] = mapped_column("MANAGER", db.String(10), nullable=True, comment="담당자 이름")
+  manager: Mapped[Optional[str]] = mapped_column("MANAGER", db.String(100), nullable=True, comment="담당자 이름")
 
   # 담당자 직책 (NULL 가능)
-  managerRank: Mapped[Optional[str]] = mapped_column("MANAGER_RANK", db.String(500), nullable=True, comment="담당자 직책")
+  managerRank: Mapped[Optional[str]] = mapped_column("MANAGER_RANK", db.String(50), nullable=True, comment="담당자 직책")
 
   # 담당자 연락처 (NULL 가능)
-  number: Mapped[Optional[str]] = mapped_column("NUMBER", db.Text, nullable=True, comment="담당자 연락처")
+  number: Mapped[Optional[str]] = mapped_column("NUMBER", db.String(50), nullable=True, comment="담당자 연락처")
 
   # 이메일 (NULL 가능)
-  email: Mapped[Optional[str]] = mapped_column("EMAIL", db.String(10), nullable=True, comment="이메일")
+  email: Mapped[Optional[str]] = mapped_column("EMAIL", db.String(255), nullable=True, comment="이메일")
   
   # 상태 코드 (NULL 가능)
   stateCode: Mapped[Optional[str]] = mapped_column("STATE_CODE", db.String(4), nullable=True, comment="상태 코드")
