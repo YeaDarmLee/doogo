@@ -5,32 +5,11 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pytz import timezone
 
-# Slack client (slackService 우선, 없으면 토큰으로 직접 생성)
-try:
-  from application.src.service import slackService as _slack_svc
-  _slack_client = getattr(_slack_svc, "client", None)
-except Exception:
-  _slack_client = None
+from application.src.service import slackService as _slack_svc
+from slack_sdk import WebClient as _SlackClient
+from application.src.repositories.SupplierListRepository import SupplierListRepository
 
-try:
-  from slack_sdk import WebClient as _SlackClient
-except Exception:
-  _SlackClient = None
-
-# Repository (공급사 매핑)
-try:
-  from application.src.repositories.SupplierListRepository import SupplierListRepository
-except Exception:
-  SupplierListRepository = None
-
-# 폴백 직접 쿼리용 (선택)
-try:
-  from sqlalchemy import select
-  from application.src.models import db
-  from application.src.models.SupplierList import SupplierList
-except Exception:
-  db, SupplierList, select = None, None, None
-
+_slack_client = getattr(_slack_svc, "client", None)
 _KST = timezone('Asia/Seoul')
 SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
 
@@ -81,27 +60,10 @@ class Cafe24SuppliersService:
       return None
     return None
 
-  # ---------- DB 매핑 ----------
-  def _find_supplier_by_id(self, supplier_id: str):
-    # Repo 메서드가 있으면 사용
-    if SupplierListRepository and hasattr(SupplierListRepository, "findBySupplierID"):
-      try:
-        return SupplierListRepository.findBySupplierID(str(supplier_id))
-      except Exception:
-        pass
-    # 폴백: 직접 쿼리
-    if db and SupplierList and select:
-      try:
-        stmt = select(SupplierList).where(SupplierList.supplierID == str(supplier_id))
-        return db.session.execute(stmt).scalar_one_or_none()
-      except Exception:
-        return None
-    return None
-
   def _find_supplier_channels(self, supplier_code: str) -> List[str]:
     if not supplier_code:
       return []
-    s = self._find_supplier_by_id(supplier_code)
+    s = SupplierListRepository.findBySupplierCode(supplier_code)
     ch = getattr(s, "channelId", None) if s else None
     if not ch:
       return []

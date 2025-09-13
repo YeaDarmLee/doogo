@@ -6,33 +6,11 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pytz import timezone
 
-# Slack 전송: slackService의 client 우선 사용, 없으면 토큰으로 직접 생성
-try:
-  from application.src.service import slackService as _slack_svc  # client(chat_postMessage) 있음
-  _slack_client = getattr(_slack_svc, "client", None)
-except Exception:
-  _slack_client = None
+from application.src.service import slackService as _slack_svc
+from application.src.repositories.SupplierListRepository import SupplierListRepository
+from slack_sdk import WebClient as _SlackClient
 
-try:
-  # 리포지토리 사용(권장)
-  from application.src.repositories.SupplierListRepository import SupplierListRepository
-except Exception:
-  SupplierListRepository = None  # 아래에서 폴백 쿼리
-
-# 폴백 쿼리용
-try:
-  from sqlalchemy import select
-  from application.src.models import db
-  from application.src.models.SupplierList import SupplierList
-except Exception:
-  db, SupplierList, select = None, None, None
-
-try:
-  # 최후 수단: 직접 WebClient 생성
-  from slack_sdk import WebClient as _SlackClient
-except Exception:
-  _SlackClient = None
-
+_slack_client = getattr(_slack_svc, "client", None)
 _KST = timezone('Asia/Seoul')
 
 SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()

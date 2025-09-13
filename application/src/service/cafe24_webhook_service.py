@@ -10,12 +10,7 @@ from application.src.service.cafe24_orders_service import Cafe24OrdersService
 from application.src.service.cafe24_products_service import Cafe24ProductsService
 from application.src.service.cafe24_suppliers_service import Cafe24SuppliersService
 from application.src.service.cafe24_boards_service import Cafe24BoardsService
-
-# 이벤트 영속화(있으면 사용, 없으면 건너뜀)
-try:
-  from application.src.repositories.WebhookEventRepository import WebhookEventRepository
-except Exception:
-  WebhookEventRepository = None  # optional
+from application.src.repositories.WebhookEventRepository import WebhookEventRepository
 
 class Cafe24WebhookService:
   """
