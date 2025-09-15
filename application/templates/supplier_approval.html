@@ -1,0 +1,137 @@
+<!-- header -->
+{% include './common/header.html' %}
+
+<script>
+  // HTML 이스케이프 유틸 (supplier.html과 동일 스타일)
+  function escapeHtml(s) {
+    return String(s || '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  // 상태 배지
+  function badge(state) {
+    const s = (state || '').toUpperCase();
+    if (s === 'A') return '<span class="badge bg-success">A</span>';
+    if (s === 'R') return '<span class="badge bg-secondary">R</span>';
+    return '<span class="badge bg-warning text-dark">P</span>';
+  }
+
+  // 승인 처리: 알림 → Cafe24 공급사 생성 → 승인 API → 리로드
+  async function approveSupplier(seq) {
+    if (!seq) return;
+
+    const res = await Swal.fire({
+      title: '공급사를 승인하시겠습니까?',
+      text: '공급사 승인 후 Slack 생성 프로세스가 바로 실행됩니다.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: '승인',
+      cancelButtonText: '취소',
+      reverseButtons: true
+    });
+    if (!res.isConfirmed) return;
+
+    try {
+      // 1) Cafe24 관리자 API로 공급사 생성 (백엔드 프록시 사용)
+      const c = await fetch('/supplier/ajax/cafe24/createSupplier', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ seq })
+      });
+      const cj = await c.json();
+      if (c.status !== 200 || cj.code !== 20000) {
+        Swal.fire({ icon:'error', title:'Cafe24 등록 실패', text: cj.message || '공급사 생성 중 문제가 발생했습니다.' });
+        return;
+      }
+
+      // 2) 승인(A) 반영
+      const r = await fetch('/supplier/ajax/approval/set', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ seq, action: 'approve' })
+      });
+      const js = await r.json();
+      if (js.code === 20000) {
+        await Swal.fire({ icon:'success', title:'승인 완료', text:'Slack 프로세스를 시작합니다.' });
+        location.reload();
+      } else {
+        Swal.fire({ icon:'error', title:'승인 실패', text: js.message || '처리 중 문제가 발생했습니다.' });
+      }
+    } catch (e) {
+      Swal.fire({ icon:'error', title:'네트워크 오류', text:'잠시 후 다시 시도해 주세요.' });
+    }
+  }
+</script>
+
+<body id="page-top">
+  <div id="wrapper">
+    {% include './common/sidebar.html' %}
+
+    <div id="content-wrapper" class="d-flex flex-column">
+      <div id="content">
+        <div class="container-fluid">
+          <!-- Page Heading -->
+          <h1 class="h3 mb-2 text-gray-800">공급사 승인</h1>
+          <p class="mb-4">대기(P)/반려(R) 공급사를 검토 후 승인 처리합니다.</p>
+
+          <!-- 리스트 카드 -->
+          <div class="card shadow mb-4">
+            <div class="card-header py-3 d-sm-flex align-items-center justify-content-between">
+              <h6 class="m-0 font-weight-bold text-primary">승인 대상 목록</h6>
+            </div>
+
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-bordered text-center" id="dataTable" width="100%" cellspacing="0">
+                  <thead>
+                    <tr>
+                      <th>SEQ</th>
+                      <th>회사명</th>
+                      <th>CAFE24 코드</th>
+                      <th>상태</th>
+                      <th>담당자</th>
+                      <th>연락처</th>
+                      <th>이메일</th>
+                      <th>기능</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for s in supplierList %}
+                      <tr data-seq="{{ s.seq }}">
+                        <td>{{ s.seq }}</td>
+                        <td>{{ s.companyName }}</td>
+                        <td>{{ s.supplierCode }}</td>
+                        <td>{{ s.stateCode }}</td>
+                        <td>{{ s.manager }}</td>
+                        <td>{{ s.number }}</td>
+                        <td>{{ s.email }}</td>
+                        <td>
+                          <a href="#"
+                             class="d-sm-inline-block btn btn-sm btn-success shadow-sm"
+                             onclick="approveSupplier({{ s.seq }}); return false;">승인</a>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              <!-- 서버에서 대기/반려만 내려주면 단순합니다. 필요시 필터 추가 가능 -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% include './common/copyright.html' %}
+    </div>
+  </div>
+
+  <a class="scroll-to-top rounded" href="#page-top">
+    <i class="fas fa-angle-up"></i>
+  </a>
+
+  {% include './common/footer.html' %}
+</body>

@@ -1,16 +1,41 @@
+# application/src/service/supplier.py
+# -*- coding: utf-8 -*-
 from flask import Blueprint, render_template, request, jsonify
 from sqlalchemy.exc import SQLAlchemyError
+import os, requests
+
 from application.src.models.SupplierList import SupplierList
-from application.src.repositories.SupplierListRepository import SupplierListRepository
+from application.src.repositories.SupplierListRepository import (
+  SupplierListRepository,
+  STATE_PENDING, STATE_APPROVED, STATE_REJECTED
+)
+
+# Cafe24 OAuth 토큰 서비스 사용(※ 토큰은 여기서 동적으로 발급/갱신)
+from application.src.service.cafe24_oauth_service import get_access_token
 
 supplier = Blueprint("supplier", __name__, url_prefix="/supplier")
+
+# ====== 환경 ======
+CAFE24_BASE_URL     = os.getenv("CAFE24_BASE_URL")            # 예: https://onedayboxb2b.cafe24api.com
+
+def _cafe24_headers():
+  """
+  Cafe24 Admin API 헤더 구성
+  - Authorization 은 oauth_service.get_access_token() 으로 매 호출시 최신 토큰 확보
+  """
+  access_token = get_access_token()  # DB refresh_token 기반으로 access_token 재발급/캐시
+  return {
+    "Authorization": f"Bearer {access_token}",
+    "Content-Type": "application/json"
+  }
+
 
 # -----------------------------------
 # View: 공급사 관리 페이지
 # -----------------------------------
 @supplier.route("/", methods=["GET"])
 def index():
-  items = SupplierListRepository.findAll()
+  items = SupplierListRepository.findApproved()
 
   def to_Dict(x: SupplierList) -> dict:
     return {
@@ -71,7 +96,8 @@ def addSupplier():
       manager=manager,
       managerRank=manager_rank,
       number=number,
-      email=email
+      email=email,
+      stateCode=STATE_PENDING
     )
     SupplierListRepository.save(s)
     return jsonify({"code": 20000, "seq": s.seq})
@@ -200,3 +226,162 @@ def listSuppliers():
     }
 
   return jsonify({"code": 20000, "supplierList": [to_Dict(s) for s in items]})
+
+# -----------------------------------
+# View: 공급사 승인 페이지
+# -----------------------------------
+@supplier.route("/approval", methods=["GET"])
+def approval_view():
+  # 초기 화면에는 '대기'만 내려줌
+  pending = SupplierListRepository.find_pending(limit=100)
+
+  def to_dict(x: SupplierList) -> dict:
+    return {
+      "seq": x.seq,
+      "companyName": x.companyName or "",
+      "supplierCode": x.supplierCode or "",
+      "stateCode": getattr(x, "stateCode", "") or "",
+      "manager": x.manager or "",
+      "number": x.number or "",
+      "email": x.email or "",
+      "updatedAt": x.updatedAt.isoformat() if getattr(x, "updatedAt", None) else None
+    }
+
+  return render_template("supplier_approval.html",
+                         pageName="supplier_approval",
+                         supplierList=[to_dict(s) for s in pending])
+
+# -----------------------------------
+# Ajax: 승인/반려 목록 조회(필터+페이지네이션)
+# body: { states?: ["P","A","R"], limit?: 50, offset?: 0 }
+# -----------------------------------
+@supplier.route("/ajax/approval/list", methods=["POST"])
+def approval_list():
+  data = request.get_json(silent=True) or {}
+  states = data.get("states") or [STATE_PENDING]
+  limit = int(data.get("limit") or 50)
+  offset = int(data.get("offset") or 0)
+
+  items = SupplierListRepository.find_by_states(states, limit=limit, offset=offset)
+
+  def to_dict(x: SupplierList) -> dict:
+    return {
+      "seq": x.seq,
+      "companyName": x.companyName or "",
+      "supplierCode": x.supplierCode or "",
+      "stateCode": getattr(x, "stateCode", "") or "",
+      "manager": x.manager or "",
+      "number": x.number or "",
+      "email": x.email or "",
+      "updatedAt": x.updatedAt.isoformat() if getattr(x, "updatedAt", None) else None
+    }
+
+  return jsonify({"code": 20000, "items": [to_dict(s) for s in items]})
+
+# -----------------------------------
+# Ajax: 단건 승인/반려
+# body: { seq: number, action: "approve"|"reject" }
+# -----------------------------------
+@supplier.route("/ajax/approval/set", methods=["POST"])
+def approval_set():
+  data = request.get_json(silent=True) or {}
+  seq = int(data.get("seq") or 0)
+  action = (data.get("action") or "").strip().lower()
+
+  s = SupplierListRepository.findBySeq(seq)
+  if not s:
+    return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
+
+  target = STATE_APPROVED if action == "approve" else STATE_REJECTED
+  SupplierListRepository.update_state(seq, target)
+  return jsonify({"code": 20000, "seq": seq, "stateCode": target})
+
+# -----------------------------------
+# Ajax: 일괄 승인/반려
+# body: { seqs: number[], action: "approve"|"reject" }
+# -----------------------------------
+@supplier.route("/ajax/approval/bulkSet", methods=["POST"])
+def approval_bulk_set():
+  data = request.get_json(silent=True) or {}
+  seqs = list({int(x) for x in (data.get("seqs") or []) if str(x).isdigit()})
+  action = (data.get("action") or "").strip().lower()
+
+  if not seqs:
+    return jsonify({"code": 40001, "message": "선택된 대상이 없습니다."}), 400
+
+  target = STATE_APPROVED if action == "approve" else STATE_REJECTED
+  n = SupplierListRepository.bulk_update_state(seqs, target)
+  return jsonify({"code": 20000, "updated": n, "stateCode": target})
+
+
+# -----------------------------------
+# Ajax: Cafe24 공급사 생성 프록시
+# body: { seq: number }
+# -----------------------------------
+@supplier.route("/ajax/cafe24/createSupplier", methods=["POST"])
+def cafe24_create_supplier():
+  data = request.get_json(silent=True) or {}
+  seq = int(data.get("seq") or 0)
+  if not seq:
+    return jsonify({"code": 40001, "message": "seq가 필요합니다."}), 400
+
+  s = SupplierListRepository.findBySeq(seq)
+
+  if not s:
+    return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
+
+  if not CAFE24_BASE_URL:
+    return jsonify({"code": 50010, "message": "CAFE24_BASE_URL 환경변수가 없습니다."}), 500
+
+  # 안전 문자열
+  def _safe(v): return (v or "").strip() if isinstance(v, str) else (v if v is not None else "")
+
+  # ====== 매핑 규칙 ======
+  # supplier_name -> companyName
+  # manager_information[0].no -> 1 (고정)
+  # manager_information[0].name -> manager
+  # manager_information[0].phone -> number
+  # manager_information[0].email -> email
+  # trading_type -> "D"
+  # payment_period -> "A"
+  # phone -> number
+  # company_name -> companyName
+  payload = {
+    "shop_no": 1,
+    "request": {
+      "supplier_name": _safe(s.companyName),
+      "manager_information": [{
+        "no": 1,
+        "name": _safe(s.manager),
+        "phone": _safe(s.number),
+        "email": _safe(s.email)
+      }],
+      "trading_type": "D",
+      # "payment_period": "A", # 월 정산
+      "phone": _safe(s.number),
+      "company_name": _safe(s.companyName)
+    }
+  }
+
+  url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/suppliers"
+
+  try:
+    resp = requests.post(url, headers=_cafe24_headers(), json=payload, timeout=20)
+    try:
+      body = resp.json()
+      print(body)
+    except Exception:
+      body = {"raw": resp.text}
+
+    if resp.status_code not in (200, 201):
+      # Cafe24는 오류 상세를 본문에 넣어주는 경우가 많음 → 그대로 전달
+      return jsonify({
+        "code": 50011,
+        "message": f"Cafe24 API 오류(status={resp.status_code})",
+        "detail": body
+      }), 200  # 프런트에서 code로 판정
+
+    # 성공(필요 시 body 의 식별자를 DB에 저장하는 확장 가능)
+    return jsonify({"code": 20000, "result": body})
+  except requests.RequestException as e:
+    return jsonify({"code": 50012, "message": "Cafe24 호출 실패", "detail": str(e)}), 200
