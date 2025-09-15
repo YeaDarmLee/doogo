@@ -14,7 +14,8 @@ from application.src.service.slackService import (
   notify_invite_mail_sent,
   notify_user_invited_to_channel,
   notify_contract_sent,
-  notify_contract_failed
+  notify_contract_failed,
+  post_message_to_channel
 )
 
 # Slack SDK
@@ -26,6 +27,7 @@ except Exception:
   class SlackApiError(Exception): ...
   pass
 
+SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
 _slack_client = WebClient(token=SLACK_BOT_TOKEN) if (WebClient and SLACK_BOT_TOKEN) else None
 
@@ -86,23 +88,15 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
     return
 
   try:
-    cond_need_slack = and_(
-      SupplierList.channelId.is_(None),
-      SupplierList.supplierCode.isnot(None),
-      SupplierList.companyName.isnot(None),
-      SupplierList.email.isnot(None),
-      SupplierList.email != ""
-    )
-    cond_need_contract = and_(
-      SupplierList.channelId.isnot(None),
-      or_(SupplierList.contractStatus.is_(None), SupplierList.contractStatus == 'E'),
-      SupplierList.email.isnot(None),
-      SupplierList.email != ""
-    )
-
     base_target = or_(
-      and_(SupplierList.stateCode.is_(None), or_(cond_need_slack, cond_need_contract)),
-      SupplierList.stateCode == 'I'
+      SupplierList.stateCode.is_(None),  # STATE_CODE IS NULL
+      and_(                              # STATE_CODE='RA' AND (ID/PW 존재)
+        SupplierList.stateCode == "RA",
+        SupplierList.stateCode.isnot(None),
+        SupplierList.supplierID.isnot(None),
+        SupplierList.supplierPW.isnot(None),
+      ),
+      SupplierList.stateCode == "I"      # STATE_CODE = 'I'
     )
 
     rows = (
@@ -113,6 +107,7 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
         .limit(batch_size)
       ).scalars().all()
     )
+
     if not rows:
       return
 
@@ -247,6 +242,15 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
     _release_lock(lock_key)
 
 def _after_slack_success(supplier: SupplierList):
+  """
+  Slack 생성 이후 전자서명 발송:
+  - contractSkip=1 이면 스킵(S) 처리
+  - contractTemplate='A' → 단일 수수료(%)
+  - contractTemplate='B' → 임계금액 + 이하/초과 수수료(%)
+  - 이메일 없으면 오류(E)
+  - 토큰/발송 성공 시 대기(P) → 완료(A)
+  """
+  # 0) 전처리: eformsign 모듈 체크
   try:
     from application.src.service.eformsign_service import EformsignService, EformsignError
   except Exception as e:
@@ -258,6 +262,23 @@ def _after_slack_success(supplier: SupplierList):
     print(f"[{datetime.now()}] eformsign 모듈 임포트 실패 seq={supplier.seq} err={e}")
     return
 
+  # 1) 스킵 플래그(외부 제출) → 발송 생략
+  if getattr(supplier, "contractSkip", False):
+    supplier.contractStatus = 'S'  # Skipped(외부제출)
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()
+    print(f"[{datetime.now()}] eformsign 전송 스킵(외부제출) seq={supplier.seq}")
+    # 알림: 스킵 통지(원하면 주석 해제)
+    text = (
+      f":package: *사전 계약 완료 공급사* / 공급사: {supplier.companyName}"
+    )
+    post_message_to_channel(channel_id=supplier.channelId,text=text)
+    post_message_to_channel(channel_id=SLACK_BROADCAST_CHANNEL_ID,text=text)
+    return
+
+  # 2) 수신 이메일 검사
   recipient_email = (supplier.email or "").strip()
   if not recipient_email:
     supplier.contractStatus = 'E'
@@ -266,7 +287,6 @@ def _after_slack_success(supplier: SupplierList):
     except Exception:
       db.session.rollback()
     print(f"[{datetime.now()}] eformsign 전송 스킵(이메일 없음) seq={supplier.seq}")
-
     notify_contract_failed(
       recipient_email or "-",
       supplier_name=supplier.companyName,
@@ -275,7 +295,97 @@ def _after_slack_success(supplier: SupplierList):
     )
     return
 
-  # 전송대기(P)
+  # 3) 계약 템플릿/필드 구성
+  t = (getattr(supplier, "contractTemplate", "") or "").upper()
+  fields = []
+  template_id = None
+
+  if t == "A":
+    # 단일 퍼센트
+    pct = supplier.contractPercent
+    if pct is None or float(pct) < 0 or float(pct) > 100:
+      supplier.contractStatus = 'E'
+      try:
+        db.session.commit()
+      except Exception:
+        db.session.rollback()
+      notify_contract_failed(
+        recipient_email=recipient_email,
+        supplier_name=supplier.companyName,
+        reason="계약서 A: 수수료(%) 값이 유효하지 않습니다.",
+        supplier_channel_id=supplier.channelId
+      )
+      return
+    # 전송 필드 (필드 키는 템플릿에 맞춰 수정)
+    fields = [
+      {"name": "percent", "value": str(pct)}
+    ]
+    template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_A")
+
+  elif t == "B":
+    # 임계금액 + 이하/초과 퍼센트
+    th = supplier.contractThreshold
+    pu = supplier.contractPercentUnder
+    po = supplier.contractPercentOver
+    ok = True
+    try:
+      ok = (th is not None and int(th) >= 0 and
+            pu is not None and 0 <= float(pu) <= 100 and
+            po is not None and 0 <= float(po) <= 100)
+    except Exception:
+      ok = False
+
+    if not ok:
+      supplier.contractStatus = 'E'
+      try:
+        db.session.commit()
+      except Exception:
+        db.session.rollback()
+      notify_contract_failed(
+        recipient_email=recipient_email,
+        supplier_name=supplier.companyName,
+        reason="계약서 B: 임계금액/수수료(%) 값이 유효하지 않습니다.",
+        supplier_channel_id=supplier.channelId
+      )
+      return
+
+    fields = [
+      {"name": "threshold", "value": str(int(th))},
+      {"name": "percent_under", "value": str(pu)},
+      {"name": "percent_over", "value": str(po)},
+    ]
+    template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_B")
+
+  else:
+    # 템플릿 미선택 → 발송 안 함(대신 관리자 확인 필요)
+    supplier.contractStatus = 'E'
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()
+    notify_contract_failed(
+      recipient_email=recipient_email,
+      supplier_name=supplier.companyName,
+      reason="계약서 템플릿이 선택되지 않았습니다.",
+      supplier_channel_id=supplier.channelId
+    )
+    return
+
+  if not template_id:
+    supplier.contractStatus = 'E'
+    try:
+      db.session.commit()
+    except Exception:
+      db.session.rollback()
+    notify_contract_failed(
+      recipient_email=recipient_email,
+      supplier_name=supplier.companyName,
+      reason="EFORMSIGN 템플릿 ID가 설정되지 않았습니다.",
+      supplier_channel_id=supplier.channelId
+    )
+    return
+
+  # 4) 전송대기(P) 저장
   try:
     supplier.contractStatus = 'P'
     db.session.commit()
@@ -283,6 +393,7 @@ def _after_slack_success(supplier: SupplierList):
     db.session.rollback()
     print(f"[{datetime.now()}] 계약 상태(P) 저장 실패 seq={supplier.seq}")
 
+  # 5) 토큰 발급 → 문서 생성/전송
   try:
     svc = EformsignService()
     tr = svc.issue_access_token()
@@ -292,12 +403,14 @@ def _after_slack_success(supplier: SupplierList):
     )
 
     recipient_name = (supplier.companyName or "공급사 담당자").strip()
+
+    # ⚠️ create_document_from_template 의 fields 포맷은 실제 템플릿에 맞춰 조정 필요
     doc = svc.create_document_from_template(
       token=tr,
-      template_id=os.getenv("EFORMSIGN_TEMPLATE_ID"),
+      template_id=template_id,
       recipient_name=recipient_name,
       recipient_email=recipient_email,
-      fields=[],
+      fields=fields,
     )
 
     doc_id = doc.get("document_id") or None
@@ -309,8 +422,7 @@ def _after_slack_success(supplier: SupplierList):
     supplier.contractStatus = 'A'
     if doc_id:
       supplier.contractId = doc_id
-      
-    # ✅ 성공 알림
+
     notify_contract_sent(
       recipient_email=recipient_email,
       supplier_name=supplier.companyName,
@@ -323,6 +435,7 @@ def _after_slack_success(supplier: SupplierList):
     except Exception:
       db.session.rollback()
       print(f"[{datetime.now()}] 계약 상태/ID 저장 실패 seq={supplier.seq}")
+
     return tr
 
   except EformsignError as e:
@@ -357,3 +470,4 @@ def _after_slack_success(supplier: SupplierList):
       reason=str(e),
       supplier_channel_id=supplier.channelId
     )
+

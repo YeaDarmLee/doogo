@@ -244,15 +244,14 @@
 
   // 등록 폼 리셋
   function resetForm() {
-    $('#supplierCompanyName').val('');
-    $('#supplierCode').val('');
-    $('#supplierID').val('');
-    $('#supplierPW').val('');
-    $('#supplierURL').val('');
-    $('#supplierManager').val('');
-    $('#supplierManagerRank').val('');
-    $('#supplierNumber').val('');
-    $('#supplierEmail').val('');
+    // 입력값 리셋
+    $('#supplierCompanyName,#supplierCode,#supplierID,#supplierPW,#supplierURL,#supplierManager,#supplierManagerRank,#supplierNumber,#supplierEmail').val('');
+    // 계약 필드 리셋/토글
+    $('#contractTemplate').val('');
+    $('#contractPercent,#contractThreshold,#contractPercentUnder,#contractPercentOver').val('');
+    $('#contractSkip').prop('checked', false);
+    if (typeof toggleContractFields === 'function') toggleContractFields();
+    // 검증 상태 초기화
     clearErrors(document.getElementById('supplierForm'));
   }
 
@@ -511,6 +510,30 @@
     // 서버 렌더 + API 기준 정합을 맞추고 싶다면 주석 해제
     // reloadSupplierTable();
   });
+
+  // ▼ 유효성 규칙 확장
+  const CONTRACT_RULES = {
+    A: {
+      contractPercent: { required: true, number: true, min: 0, max: 100 }
+    },
+    B: {
+      contractThreshold:    { required: true, integer: true, min: 0 },
+      contractPercentUnder: { required: true, number: true,  min: 0, max: 100 },
+      contractPercentOver:  { required: true, number: true,  min: 0, max: 100 }
+    }
+  };
+
+  // ▼ 숫자/정수 검사기 보강
+  function isNumber(val) { return !isNaN(val) && val !== '' && isFinite(Number(val)); }
+  function isInteger(val) { return /^\d+$/.test(String(val)); }
+
+  // ▼ 계약서 유형 토글
+  function toggleContractFields() {
+    const t = $('#contractTemplate').val();
+    $('#contractAFields').toggleClass('d-none', t !== 'A');
+    $('#contractBFields').toggleClass('d-none', t !== 'B');
+  }
+  $(document).on('change', '#contractTemplate', toggleContractFields);
 </script>
 
 <body id="page-top">
@@ -699,6 +722,61 @@
                      placeholder="이메일" maxlength="30">
               <div class="invalid-feedback">올바른 이메일 형식이 아닙니다.</div>
             </div>
+
+            <!-- 계약서 선택/입력 -->
+            <div class="border-top pt-3 mt-3">
+              <div class="form-group">
+                <label class="small text-muted mb-1">계약서 선택</label>
+                <select class="form-control" id="contractTemplate" name="contractTemplate">
+                  <option value="">선택안함</option>
+                  <option value="A">A. 단일 수수료(%)</option>
+                  <option value="B">B. 특정금액 기준 구간별 수수료</option>
+                </select>
+              </div>
+
+              <!-- A형: 단일 퍼센트 -->
+              <div id="contractAFields" class="d-none">
+                <div class="form-group">
+                  <input type="number" step="0.01" min="0" max="100"
+                        class="form-control form-control-user"
+                        id="contractPercent" name="contractPercent"
+                        placeholder="수수료(%)">
+                  <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+                </div>
+              </div>
+
+              <!-- B형: 임계금액 + 이하/초과 퍼센트 -->
+              <div id="contractBFields" class="d-none">
+                <div class="form-group">
+                  <input type="number" step="1" min="0"
+                        class="form-control form-control-user"
+                        id="contractThreshold" name="contractThreshold"
+                        placeholder="특정 금액(원)">
+                  <div class="invalid-feedback">0 이상의 금액을 입력해 주세요.</div>
+                </div>
+                <div class="form-group">
+                  <input type="number" step="0.01" min="0" max="100"
+                        class="form-control form-control-user"
+                        id="contractPercentUnder" name="contractPercentUnder"
+                        placeholder="이하일 때 수수료(%)">
+                  <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+                </div>
+                <div class="form-group">
+                  <input type="number" step="0.01" min="0" max="100"
+                        class="form-control form-control-user"
+                        id="contractPercentOver" name="contractPercentOver"
+                        placeholder="초과일 때 수수료(%)">
+                  <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+                </div>
+              </div>
+
+              <!-- 이미 계약서 제출(사전 체결) -->
+              <div class="form-group form-check mt-2">
+                <input type="checkbox" class="form-check-input" id="contractSkip" name="contractSkip" value="1">
+                <label class="form-check-label" for="contractSkip">이미 계약서를 제출한 업체(발송 스킵)</label>
+              </div>
+            </div>
+
           </form>
         </div>
 

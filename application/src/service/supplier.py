@@ -68,9 +68,10 @@ def addSupplier():
       v = data.get(k)
       return v.strip() if isinstance(v, str) else v
 
+    # 기존 필드
     company_name = g("supplierCompanyName") or ""
     supplier_code = g("supplierCode") or ""
-    supplier_id  = g("supplierID") or ""   # 자유형식 + 최소 6자
+    supplier_id  = g("supplierID") or ""
     supplier_pw  = g("supplierPW") or None
     supplier_url = g("supplierURL") or None
     manager      = g("supplierManager") or None
@@ -78,14 +79,58 @@ def addSupplier():
     number       = g("supplierNumber") or None
     email        = g("supplierEmail") or None
 
-    # 검증 (프런트와 일치)
+    # 신규: 계약 필드
+    contract_template = (g("contractTemplate") or "").upper()  # '', 'A', 'B'
+    contract_skip     = 1 if str(g("contractSkip") or "0") in ("1","true","True") else 0
+
+    # 숫자 파싱 유틸
+    def to_decimal(val):
+      try:
+        return None if val in (None, "") else round(float(val), 2)
+      except Exception:
+        return None
+
+    def to_int(val):
+      try:
+        return None if val in (None, "") else int(val)
+      except Exception:
+        return None
+
+    contract_percent       = to_decimal(g("contractPercent"))
+    contract_threshold     = to_int(g("contractThreshold"))
+    contract_percent_under = to_decimal(g("contractPercentUnder"))
+    contract_percent_over  = to_decimal(g("contractPercentOver"))
+
+    # 기본 검증 (기존과 동일)
     errors = {}
     if not company_name:
       errors["supplierCompanyName"] = "회사명은 필수입니다."
     if not supplier_id or len(supplier_id) < 6:
       errors["supplierID"] = "ID는 6자 이상 입력해 주세요."
+
+    # 계약 검증 (스킵이면 생략)
+    if not contract_skip and contract_template in ("A", "B"):
+      if contract_template == "A":
+        if contract_percent is None or contract_percent < 0 or contract_percent > 100:
+          errors["contractPercent"] = "0~100 사이 수수료(%)를 입력해 주세요."
+      elif contract_template == "B":
+        if contract_threshold is None or contract_threshold < 0:
+          errors["contractThreshold"] = "0 이상의 특정 금액을 입력해 주세요."
+        if contract_percent_under is None or contract_percent_under < 0 or contract_percent_under > 100:
+          errors["contractPercentUnder"] = "0~100 사이 수수료(%)를 입력해 주세요."
+        if contract_percent_over is None or contract_percent_over < 0 or contract_percent_over > 100:
+          errors["contractPercentOver"] = "0~100 사이 수수료(%)를 입력해 주세요."
+
     if errors:
       return jsonify({"code": 40001, "errors": errors}), 400
+
+    # contract_status 결정
+    if contract_skip:
+      contract_status = "외부제출"    # 이미 체결: 발송 스킵
+    elif contract_template in ("A","B"):
+      contract_status = "발송대기"    # 템플릿/입력값 확보 → 발송 큐 대상
+    else:
+      contract_status = ""            # 계약 미선택
 
     s = SupplierList(
       companyName=company_name,
@@ -97,8 +142,17 @@ def addSupplier():
       managerRank=manager_rank,
       number=number,
       email=email,
-      stateCode=STATE_PENDING
+
+      # 신규 계약 필드 저장
+      contractTemplate=contract_template or None,
+      contractPercent=contract_percent,
+      contractThreshold=contract_threshold,
+      contractPercentUnder=contract_percent_under,
+      contractPercentOver=contract_percent_over,
+      contractSkip=contract_skip,
+      contractStatus=contract_status
     )
+
     SupplierListRepository.save(s)
     return jsonify({"code": 20000, "seq": s.seq})
 
@@ -353,13 +407,14 @@ def cafe24_create_supplier():
       "manager_information": [{
         "no": 1,
         "name": _safe(s.manager),
-        "phone": _safe(s.number),
+        # "phone": _safe(s.number),
         "email": _safe(s.email)
       }],
       "trading_type": "D",
       # "payment_period": "A", # 월 정산
-      "phone": _safe(s.number),
-      "company_name": _safe(s.companyName)
+      # "phone": _safe(s.number),
+      "company_name": _safe(s.companyName),
+      "commission": "15"
     }
   }
 

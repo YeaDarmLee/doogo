@@ -28,20 +28,17 @@ start_scheduler(app)
 from .src.service.main import main
 from .src.service.login import login
 from .src.service.supplier import supplier
+from application.controllers.eformsign_webhook import eformsign_webhook
+from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
+from application.controllers.slack_commands import slack_commands
+from application.controllers.cafe24_oauth_controller import cafe24_oauth_controller
 
 # 블루프린트 등록
 app.register_blueprint(main)
 app.register_blueprint(login)
 app.register_blueprint(supplier)
 
-from application.controllers.eformsign_webhook import eformsign_webhook
 app.register_blueprint(eformsign_webhook)
-
-from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
 app.register_blueprint(cafe24_webhooks_bp)
-
-from application.controllers.slack_commands import slack_commands
 app.register_blueprint(slack_commands)
-
-from application.controllers.cafe24_oauth_controller import cafe24_oauth_controller
 app.register_blueprint(cafe24_oauth_controller)
