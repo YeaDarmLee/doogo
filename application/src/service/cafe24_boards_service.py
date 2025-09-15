@@ -192,6 +192,8 @@ class Cafe24BoardsService:
         number      = safe_trunc(parsed.get("연락처"), 50),
         email       = safe_trunc(parsed.get("이메일"), 255),
         stateCode   = STATE_WAITING_REVIEW,
+        contractTemplate   = "A",
+        contractPercent   = "15",
       )
       saved = SupplierListRepository.save(entity)
       logger.info(f"[board2-save-ok] seq={saved.seq} company={saved.companyName!r} state={saved.stateCode}")

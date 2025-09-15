@@ -318,8 +318,9 @@ def _after_slack_success(supplier: SupplierList):
       return
     # 전송 필드 (필드 키는 템플릿에 맞춰 수정)
     fields = [
-      {"name": "percent", "value": str(pct)}
+      {"id": "수수료", "value": f"수수료 {pct}% 를"}
     ]
+
     template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_A")
 
   elif t == "B":
@@ -349,11 +350,11 @@ def _after_slack_success(supplier: SupplierList):
       )
       return
 
-    fields = [
-      {"name": "threshold", "value": str(int(th))},
-      {"name": "percent_under", "value": str(pu)},
-      {"name": "percent_over", "value": str(po)},
-    ]
+    # fields = [
+    #   {"name": "threshold", "value": str(int(th))},
+    #   {"name": "percent_under", "value": str(pu)},
+    #   {"name": "percent_over", "value": str(po)},
+    # ]
     template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_B")
 
   else:

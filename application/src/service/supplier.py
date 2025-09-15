@@ -380,7 +380,6 @@ def cafe24_create_supplier():
     return jsonify({"code": 40001, "message": "seq가 필요합니다."}), 400
 
   s = SupplierListRepository.findBySeq(seq)
-
   if not s:
     return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
 
@@ -388,55 +387,112 @@ def cafe24_create_supplier():
     return jsonify({"code": 50010, "message": "CAFE24_BASE_URL 환경변수가 없습니다."}), 500
 
   # 안전 문자열
-  def _safe(v): return (v or "").strip() if isinstance(v, str) else (v if v is not None else "")
+  def _safe(v):
+    return (v or "").strip() if isinstance(v, str) else (v if v is not None else "")
 
-  # ====== 매핑 규칙 ======
-  # supplier_name -> companyName
-  # manager_information[0].no -> 1 (고정)
-  # manager_information[0].name -> manager
-  # manager_information[0].phone -> number
-  # manager_information[0].email -> email
-  # trading_type -> "D"
-  # payment_period -> "A"
-  # phone -> number
-  # company_name -> companyName
-  payload = {
+  # 1) 공급사 생성
+  create_supplier_payload = {
     "shop_no": 1,
     "request": {
       "supplier_name": _safe(s.companyName),
       "manager_information": [{
         "no": 1,
         "name": _safe(s.manager),
-        # "phone": _safe(s.number),
         "email": _safe(s.email)
       }],
       "trading_type": "D",
-      # "payment_period": "A", # 월 정산
-      # "phone": _safe(s.number),
       "company_name": _safe(s.companyName),
       "commission": "15"
     }
   }
 
-  url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/suppliers"
+  suppliers_url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/suppliers"
 
   try:
-    resp = requests.post(url, headers=_cafe24_headers(), json=payload, timeout=20)
+    resp = requests.post(suppliers_url, headers=_cafe24_headers(), json=create_supplier_payload, timeout=20)
     try:
       body = resp.json()
-      print(body)
     except Exception:
       body = {"raw": resp.text}
 
     if resp.status_code not in (200, 201):
-      # Cafe24는 오류 상세를 본문에 넣어주는 경우가 많음 → 그대로 전달
       return jsonify({
         "code": 50011,
         "message": f"Cafe24 API 오류(status={resp.status_code})",
         "detail": body
-      }), 200  # 프런트에서 code로 판정
+      }), 200  # 프런트는 code로 판정
 
-    # 성공(필요 시 body 의 식별자를 DB에 저장하는 확장 가능)
-    return jsonify({"code": 20000, "result": body})
+    # supplier_code 안전 추출 (공식 응답은 보통 배열 형태)
+    supplier_code = None
+    if isinstance(body, dict):
+      # 응답 케이스: {"suppliers":[{"supplier_code":"S00000001", ...}]}
+      if "suppliers" in body and isinstance(body["suppliers"], list) and body["suppliers"]:
+        supplier_code = body["suppliers"][0].get("supplier_code")
+      # 혹시 다른 키로 내려오는 변형 대비
+      if not supplier_code:
+        for k in ("supplier", "data", "result"):
+          v = body.get(k)
+          if isinstance(v, dict) and v.get("supplier_code"):
+            supplier_code = v["supplier_code"]
+            break
+
+    if not supplier_code:
+      return jsonify({
+        "code": 50013,
+        "message": "공급사 생성은 성공했지만 supplier_code를 찾지 못했습니다.",
+        "detail": body
+      }), 200
+
+    # 2) 공급사 운영자(유저) 생성
+    # 필수 필드: user_id, supplier_code, password, permission_shop_no, user_name.shop_no, user_name.user_name
+    # - user_id는 소문자/숫자 4~16자 권장(문서 스펙) :contentReference[oaicite:1]{index=1}
+    create_user_payload = {
+      "request": {
+        "user_id": (_safe(s.supplierID) or "").lower(),
+        "supplier_code": supplier_code,
+        "password": _safe(s.supplierPW),
+        "permission_shop_no": 1,
+        "user_name": [
+            {
+                "shop_no": 1,
+                "user_name": _safe(s.manager) or _safe(s.companyName)
+            }
+        ],
+      }
+    }
+
+    # 선택 필드가 있으면 보강
+    if _safe(s.email):
+      create_user_payload["request"]["email"] = _safe(s.email)
+    # phone이 있으면 권장: 카페24는 형식 검증 강화되어 있어 국내형식이 아니면 422 가능
+    if _safe(getattr(s, "number", "")):
+      create_user_payload["request"]["phone"] = _safe(s.number)
+
+    users_url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/suppliers/users"
+    resp2 = requests.post(users_url, headers=_cafe24_headers(), json=create_user_payload, timeout=20)
+    try:
+      body2 = resp2.json()
+    except Exception:
+      body2 = {"raw": resp2.text}
+
+    if resp2.status_code not in (200, 201):
+      # 운영자 생성 실패 시에도 200으로 내려 code로 판정
+      return jsonify({
+        "code": 50021,
+        "message": f"공급사 생성 성공, 운영자 생성 실패(status={resp2.status_code})",
+        "detail": {"supplier_create": body, "user_create": body2}
+      }), 200
+
+    s.supplierCode = supplier_code
+    SupplierListRepository.save(s)
+
+    return jsonify({
+      "code": 20000,
+      "result": {
+        "supplier_create": body,
+        "user_create": body2
+      }
+    })
+
   except requests.RequestException as e:
     return jsonify({"code": 50012, "message": "Cafe24 호출 실패", "detail": str(e)}), 200

@@ -1,6 +1,6 @@
 # application/src/repositories/SupplierListRepository.py
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_
 from application.src.models import db
 from application.src.models.SupplierList import SupplierList
 
@@ -106,7 +106,12 @@ class SupplierListRepository:
 
   @staticmethod
   def findApproved(limit: int = 100):
-    stmt = select(SupplierList).where((SupplierList.stateCode != STATE_PENDING) & (SupplierList.stateCode != STATE_REJECTED)).limit(limit)
+    stmt = select(SupplierList).where(
+      or_(
+        SupplierList.stateCode.is_(None),
+        (SupplierList.stateCode != STATE_PENDING) & (SupplierList.stateCode != STATE_REJECTED)
+      )
+    ).limit(limit)
     return db.session.execute(stmt).scalars().all()
 
   # ✅ 신규: 계약 필드만 부분 업데이트(발송 큐/전자서명 훅에서 사용)

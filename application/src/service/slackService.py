@@ -61,11 +61,23 @@ def _sleep_if_rate_limited(e: SlackApiError) -> bool:
   return False
 
 def _slugify_channel_name(name: str) -> str:
-  s = (name or "").lower()
-  # 한글/영문/숫자 허용 + 공백/특수문자 → 대시로
-  # Slack은 영문/숫자/하이픈/언더스코어가 안전. 한글 제거(혹은 변환) 권장.
-  s = re.sub(r"[^a-z0-9\-_]+", "-", s)
-  s = re.sub(r"-{2,}", "-", s).strip("-")
+  """
+  Slack 채널 이름용 슬러그 변환 함수
+  - 영문은 소문자 강제
+  - 공백은 언더스코어(_)로 변환
+  - 특수문자는 제거
+  - 한글은 유지
+  """
+  s = (name or "").strip().lower()
+  # 1) 공백을 언더스코어로
+  s = re.sub(r"\s+", "_", s)
+  # 2) 허용 문자: 한글, 영문, 숫자, 언더스코어, 하이픈
+  s = re.sub(r"[^a-z0-9가-힣\-_]", "", s)
+  # 3) 연속된 언더스코어/하이픈 정리
+  s = re.sub(r"_{2,}", "_", s)
+  s = re.sub(r"-{2,}", "-", s)
+  # 4) 앞뒤 불필요한 기호 제거
+  s = s.strip("_-")
   return s[:80] or "channel"
 
 # ========= 사용자 조회/초대 =========

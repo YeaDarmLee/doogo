@@ -56,7 +56,7 @@
       });
       const js = await r.json();
       if (js.code === 20000) {
-        await Swal.fire({ icon:'success', title:'승인 완료', text:'Cafe24에서 공급사 ID와 PW를 등록해주세요.' });
+        await Swal.fire({ icon:'success', title:'승인 완료', text:'Slack 생성 프로세스가 바로 실행됩니다.' });
         location.reload();
       } else {
         Swal.fire({ icon:'error', title:'승인 실패', text: js.message || '처리 중 문제가 발생했습니다.' });
