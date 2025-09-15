@@ -6,63 +6,28 @@ from typing import Dict, Any, List, Optional
 from flask import current_app
 import requests
 
-from application.src.service.slackService import client
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 from application.src.models.SupplierList import SupplierList  # ✅ DB 저장에 필요
+
+from application.src.utils.slack_utils import post_text
+from application.src.utils.text_utils import (
+  html_to_text, clean_qa_review_content,
+  safe_trunc, sanitize_company_name
+)
+from application.src.utils.cafe24_utils import (
+  BOARD_ROUTE, BOARD_NAME_MAP
+)
 
 # OAuth 토큰 유틸
 from application.src.service.cafe24_oauth_service import get_access_token
 
 logger = logging.getLogger("cafe24.boards")
 
-# 게시판 라우팅
-BOARD_ROUTE = {
-  2: "broadcast_only",       # 공급사 입점
-  4: "broadcast_and_vendor", # 상품후기
-  6: "broadcast_and_vendor", # 상품 Q&A
-}
-
-# 게시판 번호 ↔ 이름
-BOARD_NAME_MAP = {
-  1: "공지사항",
-  5: "멤버쉽가입",
-  1002: "대량 구매 문의",
-  3: "자주묻는 질문",
-  3001: "대량주문",
-  101: "브랜드 입점 문의",
-  8: "이벤트",
-  6: "상품 Q&A",
-  2: "공급사 입점",
-  4: "상품후기",
-  9: "1:1 맞춤상담",
-  7: "자료실",
-  1001: "한줄메모",
-}
-
 # 상태 코드 지정: 'R' = 승인 대기(Review)
 STATE_WAITING_REVIEW = "R"  # 승인 대기 상태(신규 지정)
 
 # 벤더 채널 프리픽스
 VENDOR_PREFIX = os.getenv("SLACK_VENDOR_PREFIX", "vendor-").strip() or "vendor-"
-
-# ---------- 유틸 ----------
-def _safe_trunc(s: Optional[str], max_len: int) -> Optional[str]:
-  if s is None:
-    return None
-  s = str(s).strip()
-  return s[:max_len] if len(s) > max_len else s
-
-def _sanitize_company_name(name: Optional[str]) -> str:
-  """
-  회사명에서 특수문자와 공백 제거 후 반환
-  """
-  if not name:
-    return ""
-  # 특수문자 제거
-  cleaned = re.sub(r"[^0-9a-zA-Z가-힣]", "", name)
-  # 공백 제거
-  cleaned = cleaned.replace(" ", "")
-  return cleaned
 
 class Cafe24BoardsService:
   def __init__(self, broadcast_env: str = "SLACK_BROADCAST_CHANNEL_ID"):
@@ -73,12 +38,6 @@ class Cafe24BoardsService:
 
     if not self.base_url:
       logger.warning("CAFE24_BASE_URL is not set; API calls will fail.")
-
-  # ---------------- Slack helpers ----------------
-  def _post_to_channel(self, channel_id: str, text: str):
-    if not channel_id:
-      raise ValueError("Broadcast channel is not configured (SLACK_BROADCAST_CHANNEL_ID).")
-    client.chat_postMessage(channel=channel_id, text=text)
 
   # ---------------- Cafe24 helpers ----------------
   def _api_base(self) -> str:
@@ -173,39 +132,6 @@ class Cafe24BoardsService:
     return self._get_product_supplier_code(pno)
 
   # ---------------- content cleaners ----------------
-  def _html_to_text(self, html_str: str) -> str:
-    """
-    HTML → text 변환(경량):
-    - <br>, </p>, </div> → 개행 / 태그 제거 / 엔티티 언이스케이프 / 공백 정리
-    """
-    if not html_str:
-      return ""
-    s = html_str
-    s = re.sub(r"(?i)</p\s*>|<br\s*/?>|</div\s*>", "\n", s)
-    s = re.sub(r"<[^>]+>", "", s)
-    s = _html.unescape(s)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = s.replace("\xa0", " ")
-    s = re.sub(r"[ \t]+", " ", s)
-    s = re.sub(r"\n{3,}", "\n\n", s)
-    return s.strip()
-
-  def _strip_original_quote(self, text: str) -> str:
-    """'[ Original Message ]' 이후 인용 블록 제거"""
-    if not text:
-      return ""
-    m = re.search(r"\[\s*Original\s+Message\s*\]", text, flags=re.IGNORECASE)
-    if not m:
-      return text
-    return text[:m.start()].rstrip()
-
-  def _clean_qa_review_content(self, html_str: str, max_len: int = 400) -> str:
-    """보드 4,6: HTML→텍스트, 인용 제거, 길이 제한"""
-    txt = self._html_to_text(html_str)
-    txt = self._strip_original_quote(txt)
-    txt = re.sub(r"\n{3,}", "\n\n", txt).strip()
-    return (txt[:max_len] + "…") if len(txt) > max_len else txt
-
   def _parse_board2_application(self, html_str: str) -> Dict[str, str]:
     """
     보드 2(공급사 입점): <div class="item-tit">제목</div><div class="item-cont">값</div> 쌍 파싱 → {제목: 값}
@@ -219,8 +145,8 @@ class Cafe24BoardsService:
     )
     for m in pattern.finditer(html_str):
       k_raw, v_raw = m.group(1), m.group(2)
-      k = self._html_to_text(k_raw)
-      v = self._html_to_text(v_raw)
+      k = html_to_text(k_raw)
+      v = html_to_text(v_raw)
       if k:
         result[k] = v
     return result
@@ -259,13 +185,13 @@ class Cafe24BoardsService:
     """
     try:
       entity = SupplierList(
-        companyName = _safe_trunc(_sanitize_company_name(parsed.get("회사명")), 100),
-        supplierURL=_safe_trunc(parsed.get("자사몰 URL"), 255),
-        manager=_safe_trunc(parsed.get("담당자명"), 100),
-        managerRank=_safe_trunc(parsed.get("직책"), 50),
-        number=_safe_trunc(parsed.get("연락처"), 50),
-        email=_safe_trunc(parsed.get("이메일"), 255),
-        stateCode=STATE_WAITING_REVIEW,              # 'R' = 승인 대기
+        companyName = safe_trunc(sanitize_company_name(parsed.get("회사명")), 100),
+        supplierURL = safe_trunc(parsed.get("자사몰 URL"), 255),
+        manager     = safe_trunc(parsed.get("담당자명"), 100),
+        managerRank = safe_trunc(parsed.get("직책"), 50),
+        number      = safe_trunc(parsed.get("연락처"), 50),
+        email       = safe_trunc(parsed.get("이메일"), 255),
+        stateCode   = STATE_WAITING_REVIEW,
       )
       saved = SupplierListRepository.save(entity)
       logger.info(f"[board2-save-ok] seq={saved.seq} company={saved.companyName!r} state={saved.stateCode}")
@@ -308,7 +234,7 @@ class Cafe24BoardsService:
 
         if bno in (4, 6):
           # Q&A/후기 정제
-          clean = self._clean_qa_review_content(raw_content, max_len=400)
+          clean = clean_qa_review_content(raw_content, max_len=400)
           body_lines += [f"제목: {title}", f"등록일시: {created}", f"내용: {clean}" if clean else "내용: (비어 있음)"]
 
         elif bno == 2:
@@ -327,7 +253,7 @@ class Cafe24BoardsService:
 
         else:
           # 기타 게시판: 기본 정제
-          base = self._html_to_text(raw_content)
+          base = html_to_text(raw_content)
           snippet = (base[:200] + "…") if len(base) > 200 else base
           body_lines += [f"제목: {title}", f"등록일시: {created}", f"내용: {snippet}" if snippet else "내용: (비어 있음)"]
 
@@ -339,7 +265,7 @@ class Cafe24BoardsService:
       text = self._build_text(msg_title, body_lines)
 
       # 1) 브로드캐스트
-      self._post_to_channel(self.broadcast, text)
+      post_text(self.broadcast, text)
 
       # 2) 공급사 채널 동시 전파(후기/문의)
       if route == "broadcast_and_vendor" and article:
@@ -348,7 +274,7 @@ class Cafe24BoardsService:
           supplier = SupplierListRepository.findBySupplierCode(supplier_code)
           if supplier and getattr(supplier, "channelId", None):
             try:
-              self._post_to_channel(supplier.channelId, text)
+              post_text(supplier.channelId, text)
             except Exception as e:
               logger.warning(f"[board-vendor-post-fail] code={supplier_code} ch={supplier.channelId} err={e}")
           else:

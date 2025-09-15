@@ -5,14 +5,13 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pytz import timezone
 
-from application.src.service import slackService as _slack_svc
-from slack_sdk import WebClient as _SlackClient
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 
-_slack_client = getattr(_slack_svc, "client", None)
+from application.src.utils.slack_utils import post_text
+from application.src.utils.cafe24_utils import coalesce
+
 _KST = timezone('Asia/Seoul')
 SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
-
 
 class Cafe24SuppliersService:
   """
@@ -26,60 +25,9 @@ class Cafe24SuppliersService:
     self.fallback_channel = os.getenv(slack_channel_env, "").strip()
     self.fallback_channel_name = os.getenv("SLACK_BROADCAST_CHANNEL_NAME", "").strip()
 
-  # ---------- Slack ----------
-  def _ensure_slack_client(self):
-    global _slack_client
-    if _slack_client:
-      return _slack_client
-    if _SlackClient:
-      token = os.getenv("SLACK_BOT_TOKEN", "").strip()
-      if token:
-        _slack_client = _SlackClient(token=token)
-        return _slack_client
-    raise RuntimeError("Slack client not available (SLACK_BOT_TOKEN 필요)")
-
-  def _post_to_channel(self, channel_id: str, text: str):
-    print(channel_id)
-    cli = self._ensure_slack_client()
-    cli.chat_postMessage(channel=channel_id, text=text)
-
-  def _resolve_channel_id_by_name(self, name: str) -> Optional[str]:
-    try:
-      cli = self._ensure_slack_client()
-      cursor = None
-      types = "public_channel,private_channel"
-      for _ in range(20):
-        resp = cli.conversations_list(limit=1000, cursor=cursor, types=types)
-        for ch in resp.get("channels", []):
-          if ch.get("name") == name:
-            return ch.get("id")
-        cursor = resp.get("response_metadata", {}).get("next_cursor")
-        if not cursor:
-          break
-    except Exception:
-      return None
-    return None
-
-  def _find_supplier_channels(self, supplier_code: str) -> List[str]:
-    if not supplier_code:
-      return []
-    s = SupplierListRepository.findBySupplierCode(supplier_code)
-    ch = getattr(s, "channelId", None) if s else None
-    if not ch:
-      return []
-
-    # 이름(#channel) 저장된 경우 ID로 변환
-    if ch.startswith("#"):
-      ch_id = self._resolve_channel_id_by_name(ch.lstrip("#"))
-      return [ch_id or ch]
-    return [ch]
-
   # ---------- 파싱 ----------
-  def _coalesce(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-    return payload.get("resource") or payload.get("data") or payload
-
   def _extract_meta(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-    d = self._coalesce(payload)
+    d = coalesce(payload)
     return {
       "supplier_code": d.get("supplier_code") or "",
       "supplier_name": d.get("supplier_name") or "",
@@ -119,4 +67,4 @@ class Cafe24SuppliersService:
     text = self._build_message(d, topic)
     
     # 신규 공급사 등록 알림
-    self._post_to_channel(SLACK_BROADCAST_CHANNEL_ID, text)
+    post_text(SLACK_BROADCAST_CHANNEL_ID, text)
