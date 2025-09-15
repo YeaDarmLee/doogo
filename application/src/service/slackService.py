@@ -60,6 +60,14 @@ def _sleep_if_rate_limited(e: SlackApiError) -> bool:
     pass
   return False
 
+def _slugify_channel_name(name: str) -> str:
+  s = (name or "").lower()
+  # 한글/영문/숫자 허용 + 공백/특수문자 → 대시로
+  # Slack은 영문/숫자/하이픈/언더스코어가 안전. 한글 제거(혹은 변환) 권장.
+  s = re.sub(r"[^a-z0-9\-_]+", "-", s)
+  s = re.sub(r"-{2,}", "-", s).strip("-")
+  return s[:80] or "channel"
+
 # ========= 사용자 조회/초대 =========
 def _lookup_user_id_by_email(email: str) -> Optional[str]:
   try:
@@ -297,7 +305,8 @@ def create_slack_channel_only(supplier: SupplierList) -> Dict[str, Any]:
     raise
 
   # 채널명 정규화(공백/특수문자 제거)
-  channel_name = f"{SLACK_CHANNEL_PREFIX}{supplier.companyName}"
+  raw_name = f"{SLACK_CHANNEL_PREFIX}{supplier.companyName or ''}"
+  channel_name = _slugify_channel_name(raw_name)
   logger.info(f"[create-start] seq={supplier.seq} name={channel_name} private={SLACK_CHANNEL_PRIVATE}")
 
   # 1) 채널 생성
