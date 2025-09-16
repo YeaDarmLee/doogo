@@ -276,6 +276,15 @@ def _after_slack_success(supplier: SupplierList):
     )
     post_message_to_channel(channel_id=supplier.channelId,text=text)
     post_message_to_channel(channel_id=SLACK_BROADCAST_CHANNEL_ID,text=text)
+    
+    success_text = (
+      f":tada: `{supplier.companyName}` 공급사 지원 채널이 생성되었습니다.\n"
+      f"관리자 링크 바로가기: https://eclogin.cafe24.com/Shop/?url=Init&login_mode=3\n"
+      f"아이디: `onedayboxb2b` / 공급사 ID: `{supplier.supplierID}` / PW: `{supplier.supplierPW}`\n"
+      f"첫 로그인 할 때 비밀번호 재설정이 나오니 로그인 후 원하시는 비밀번호로 셋팅해주시면 됩니다.:smile:\n"
+      f":round_pushpin: 운영 관련 공지와 사용 가이드는 <#C09DBG0UYCS> 및 <#C09EAJ46Z5J> 채널을 꼭 참고해주세요."
+    )
+    post_message_to_channel(channel_id=supplier.channelId,text=success_text)
     return
 
   # 2) 수신 이메일 검사

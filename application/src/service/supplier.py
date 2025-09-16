@@ -389,7 +389,13 @@ def cafe24_create_supplier():
   # 안전 문자열
   def _safe(v):
     return (v or "").strip() if isinstance(v, str) else (v if v is not None else "")
-
+  
+  template_map = {
+    "A": s.contractPercent,
+    "B": s.contractPercentOver,
+  }
+  commission = template_map.get(s.contractTemplate, None)
+    
   # 1) 공급사 생성
   create_supplier_payload = {
     "shop_no": 1,
@@ -402,7 +408,7 @@ def cafe24_create_supplier():
       }],
       "trading_type": "D",
       "company_name": _safe(s.companyName),
-      "commission": "15"
+      "commission": commission
     }
   }
 
