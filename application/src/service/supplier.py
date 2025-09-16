@@ -126,9 +126,9 @@ def addSupplier():
 
     # contract_status 결정
     if contract_skip:
-      contract_status = "외부제출"    # 이미 체결: 발송 스킵
+      contract_status = "S"    # 이미 체결: 발송 스킵
     elif contract_template in ("A","B"):
-      contract_status = "발송대기"    # 템플릿/입력값 확보 → 발송 큐 대상
+      contract_status = "P"    # 템플릿/입력값 확보 → 발송 큐 대상
     else:
       contract_status = ""            # 계약 미선택
 

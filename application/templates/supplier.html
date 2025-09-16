@@ -7,6 +7,21 @@
    *  공통 유틸 (이스케이프/검증/디바운스/직렬화)
    * ===========================================
    */
+  const STATE_CODE_MAP = {
+    "": "대기",
+    P: "대기",
+    I: "초대",
+    A: "성공",
+    E: "에러"
+  };
+  const STATE_CONTRACT_CODE_MAP = {
+    "": "슬랙대기",
+    P: "발송대기",
+    A: "발송완료",
+    SS: "계약완료",
+    S: "외부계약",
+    E: "에러"
+  };
 
   // HTML 이스케이프(XSS 방지)
   function escapeHtml(s) {
@@ -196,11 +211,10 @@
         s.seq,
         s.companyName,
         s.supplierCode,
-        s.stateCode || '',
-        s.contractStatus || '',
+        STATE_CODE_MAP[s.stateCode] || '',
+        STATE_CONTRACT_CODE_MAP[s.contractStatus] || '',
         s.supplierID,
         s.supplierPW,
-        s.supplierURL,
         s.manager,
         s.managerRank,
         s.number,
@@ -220,11 +234,10 @@
             <td>${s.seq}</td>
             <td>${escapeHtml(s.companyName)}</td>
             <td>${escapeHtml(s.supplierCode)}</td>
-            <td>${escapeHtml(s.stateCode || '')}</td>
-            <td>${escapeHtml(s.contractStatus || '')}</td>
+            <td>${escapeHtml(STATE_CODE_MAP[s.stateCode] || '')}</td>
+            <td>${escapeHtml(STATE_CONTRACT_CODE_MAP[s.contractStatus] || '')}</td>
             <td>${escapeHtml(s.supplierID)}</td>
             <td>${escapeHtml(s.supplierPW)}</td>
-            <td>${escapeHtml(s.supplierURL)}</td>
             <td>${escapeHtml(s.manager)}</td>
             <td>${escapeHtml(s.managerRank)}</td>
             <td>${escapeHtml(s.number)}</td>
@@ -580,7 +593,6 @@
                       <th>계약서 작성여부</th>
                       <th>공급사 ID</th>
                       <th>공급사 PW</th>
-                      <th>자사몰 URL</th>
                       <th>담당자명</th>
                       <th>직책</th>
                       <th>연락처</th>
@@ -594,11 +606,10 @@
                         <td>{{ supplier.seq }}</td>
                         <td>{{ supplier.companyName }}</td>
                         <td>{{ supplier.supplierCode }}</td>
-                        <td>{{ supplier.stateCode }}</td>
-                        <td>{{ supplier.contractStatus }}</td>
+                        <td>{{ supplier.stateCode | state_text }}</td>
+                        <td>{{ supplier.contractStatus | contractState_text }}</td>
                         <td>{{ supplier.supplierID }}</td>
                         <td>{{ supplier.supplierPW }}</td>
-                        <td>{{ supplier.supplierURL }}</td>
                         <td>{{ supplier.manager }}</td>
                         <td>{{ supplier.managerRank }}</td>
                         <td>{{ supplier.number }}</td>

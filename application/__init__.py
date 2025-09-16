@@ -42,3 +42,29 @@ app.register_blueprint(eformsign_webhook)
 app.register_blueprint(cafe24_webhooks_bp)
 app.register_blueprint(slack_commands)
 app.register_blueprint(cafe24_oauth_controller)
+
+# 상태 매핑 딕셔너리
+STATE_CODE_MAP = {
+  "": "대기",
+  "P": "대기",
+  "I": "초대",
+  "A": "성공",
+  "E": "에러"
+}
+STATE_CONTRACT_CODE_MAP = {
+  "": "슬랙대기",
+  "P": "발송대기",
+  "A": "발송완료",
+  "SS": "계약완료",
+  "S": "외부계약",
+  "E": "에러"
+}
+
+def state_text(code):
+  return STATE_CODE_MAP.get(code, "")
+def contractState_text(code):
+  return STATE_CONTRACT_CODE_MAP.get(code, "")
+
+# Jinja 필터 등록
+app.jinja_env.filters["state_text"] = state_text
+app.jinja_env.filters["contractState_text"] = contractState_text
