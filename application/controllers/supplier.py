@@ -378,10 +378,18 @@ def cafe24_create_supplier():
   from decimal import Decimal
   data = request.get_json(silent=True) or {}
   seq = int(data.get("seq") or 0)
+  
   if not seq:
     return jsonify({"code": 40001, "message": "seq가 필요합니다."}), 400
 
   s = SupplierListRepository.findBySeq(seq)
+  s.contractTemplate = (data.get("contractTemplate") or "").strip()
+  s.contractPercent = (data.get("contractPercent") or "").strip()
+  s.contractThreshold = (data.get("contractThreshold") or "").strip()
+  s.contractPercentUnder = (data.get("contractPercentUnder") or "").strip()
+  s.contractPercentOver = (data.get("contractPercentOver") or "").strip()
+  s.settlementPeriod = (data.get("settlementPeriod") or "").strip()
+  
   if not s:
     return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
 

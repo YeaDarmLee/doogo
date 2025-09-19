@@ -11,22 +11,13 @@ from application.src.repositories.SupplierListRepository import SupplierListRepo
 from application.src.service import slack_service as SU
 from application.src.utils.cafe24_utils import coalesce, parse_kst, fmt_money
 
-_KST = timezone('Asia/Seoul')
-
-SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
-
 class Cafe24ProductsService:
   """
   Cafe24 '상품 등록' 웹훅 처리:
     - payload 파싱(관대한 키 수용)
     - supplier_code CSV → SupplierList.channelId 매핑
     - 매핑된 채널들로 Slack 메시지 전송
-    - 매핑이 0건이면 .env의 SLACK_BROADCAST_CHANNEL_ID/NAME 채널로 폴백
   """
-  def __init__(self, slack_channel_env: str = "SLACK_BROADCAST_CHANNEL_ID"):
-    self.fallback_channel = os.getenv(slack_channel_env, "").strip()
-    # 이름으로만 설정된 경우를 대비해 lazy-resolve
-    self.fallback_channel_name = os.getenv("SLACK_BROADCAST_CHANNEL_NAME", "").strip()
 
   # ----------------------------
   # 메시지 생성/전송
@@ -72,7 +63,6 @@ class Cafe24ProductsService:
     supplier_code = d.get("supplier_code") or ""
     msg = self._build_message(d, topic or "products/created")
 
-    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, msg)
     try:
       supplier = SupplierListRepository.findBySupplierCode(supplier_code)
       SU.post_text(supplier.channelId, msg)

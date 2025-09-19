@@ -1,6 +1,6 @@
 # application/src/repositories/SupplierListRepository.py
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, update, or_
+from sqlalchemy import select, update, or_, and_
 from application.src.models import db
 from application.src.models.SupplierList import SupplierList
 
@@ -155,3 +155,28 @@ class SupplierListRepository:
     """
     stmt = select(SupplierList).where(SupplierList.email == editor_email)
     return db.session.execute(stmt).scalar_one_or_none()
+  
+  @staticmethod  
+  def find_by_settlement_period(period_code: str, limit: int = 100):
+    """
+    정산주기(D/W/M) 기준 정산 대상 조회
+    - channelId / supplierCode 가 존재하는 공급사만
+    - settlementPeriod == period_code 인 행만
+    :param period_code: 'D' | 'W' | 'M'
+    :param limit: 최대 조회 건수
+    """
+    code = (period_code or "").strip().upper()
+    if code not in ("D", "W", "M"):
+      return []
+
+    stmt = (
+      select(SupplierList)
+      .where(and_(
+        SupplierList.channelId.isnot(None),
+        SupplierList.supplierCode.isnot(None),
+        SupplierList.settlementPeriod == code
+      ))
+      .order_by(SupplierList.seq.asc())
+      .limit(limit)
+    )
+    return db.session.execute(stmt).scalars().all()

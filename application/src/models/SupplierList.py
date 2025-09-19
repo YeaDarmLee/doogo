@@ -39,14 +39,17 @@ class SupplierList(db.Model):
   contractStatus: Mapped[Optional[str]] = mapped_column("CONTRACT_STATUS", db.String(20), nullable=True, comment="계약서 상태")
   contractId: Mapped[Optional[str]]     = mapped_column("CONTRACT_ID", db.String(100), nullable=True, comment="계약서 ID")
 
-  # ✅ 신규: 계약서 템플릿 & 파라미터
+  # 계약서 템플릿 & 파라미터
   contractTemplate: Mapped[Optional[str]]      = mapped_column("CONTRACT_TEMPLATE", db.String(20), nullable=True, comment="A(단일%)|B(구간%)")
   contractPercent: Mapped[Optional[float]]     = mapped_column("CONTRACT_PERCENT", db.Numeric(5, 2), nullable=True, comment="A용: 단일 수수료(%)")
   contractThreshold: Mapped[Optional[int]]     = mapped_column("CONTRACT_THRESHOLD", db.BigInteger, nullable=True, comment="B용: 특정 금액(원)")
   contractPercentUnder: Mapped[Optional[float]] = mapped_column("CONTRACT_PERCENT_UNDER", db.Numeric(5, 2), nullable=True, comment="B용: 이하 시 %")
   contractPercentOver: Mapped[Optional[float]]  = mapped_column("CONTRACT_PERCENT_OVER", db.Numeric(5, 2), nullable=True, comment="B용: 초과 시 %")
   contractSkip: Mapped[bool]                    = mapped_column("CONTRACT_SKIP", db.Boolean, nullable=False, server_default=db.text("0"), comment="이미 체결되어 발송 스킵")
-
+  
+  # 정산주기(D/W/M)
+  settlementPeriod: Mapped[Optional[str]] = mapped_column("SETTLEMENT_PERIOD", db.String(10), nullable=True, comment="정산주기(D/W/M)")
+    
   # 등록/수정일
   createdAt: Mapped[datetime] = mapped_column(
     "CREAT_DATE", db.DateTime, server_default=db.func.current_timestamp(), comment="등록일"

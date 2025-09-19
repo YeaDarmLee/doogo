@@ -12,8 +12,6 @@ from application.src.utils.cafe24_utils import (
   coalesce, parse_kst, fmt_money, humanize_event, humanize_shipping
 )
 
-SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
-
 class Cafe24OrdersService:
   """
   Cafe24 주문 이벤트 처리:
@@ -22,10 +20,7 @@ class Cafe24OrdersService:
     - 매핑된 채널들로 Slack 메시지 전송
     - 매핑이 없으면 .env의 SLACK_BROADCAST_CHANNEL_ID/NAME 채널로 폴백
   """
-  def __init__(self, slack_channel_env: str = "SLACK_BROADCAST_CHANNEL_ID"):
-    self.fallback_channel = os.getenv(slack_channel_env, "").strip()
-    self.fallback_channel_name = os.getenv("SLACK_BROADCAST_CHANNEL_NAME", "").strip()
-
+  
   # ------------- 주문 메타/아이템 ----------
   def _extract_order_meta(self, payload: Dict[str, Any]) -> Dict[str, Any]:
     d = coalesce(payload)
@@ -134,7 +129,6 @@ class Cafe24OrdersService:
 
     # 메시지
     text = self._build_message(meta, items, topic)
-    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, text)
 
     # 전송
     for ch in channels:
@@ -207,10 +201,7 @@ class Cafe24OrdersService:
 
     text = "\n".join(lines)
 
-    # 1) 방송 채널
-    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, text)
-
-    # 2) 공급사 채널
+    # 공급사 채널
     for code in supplier_codes:
       try:
         supplier = SupplierListRepository.findBySupplierCode(code)

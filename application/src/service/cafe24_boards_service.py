@@ -7,7 +7,7 @@ from flask import current_app
 import requests
 
 from application.src.repositories.SupplierListRepository import SupplierListRepository
-from application.src.models.SupplierList import SupplierList  # ✅ DB 저장에 필요
+from application.src.models.SupplierList import SupplierList
 
 from application.src.service import slack_service as SU
 from application.src.utils.text_utils import (
@@ -307,8 +307,6 @@ class Cafe24BoardsService:
         supplierID  = supplier_id,
         supplierPW  = "qksksk1324$",
         stateCode   = STATE_WAITING_REVIEW,  # 'R'
-        contractTemplate = "A",
-        contractPercent  = "15",
       )
       saved = SupplierListRepository.save(entity)
       logger.info(f"[board2-save-ok] seq={saved.seq} company={saved.companyName!r} state={saved.stateCode}")
@@ -381,11 +379,8 @@ class Cafe24BoardsService:
       msg_title = f":memo: [Cafe24] {board_name} 등록 알림"
       text = self._build_text(msg_title, body_lines)
 
-      # 1) 브로드캐스트
-      SU.post_text(self.broadcast, text)
-
-      # 2) 공급사 채널 동시 전파(후기/문의)
-      if route == "broadcast_and_vendor" and article:
+      if bno in (4, 6):
+        # 공급사 채널 동시 전파(후기/문의)
         supplier_code = self._resolve_supplier_code_from_article(article)  # 단일 코드
         if supplier_code:
           supplier = SupplierListRepository.findBySupplierCode(supplier_code)
@@ -398,6 +393,10 @@ class Cafe24BoardsService:
             logger.info(f"[board-vendor-skip] no mapped channel for supplier_code={supplier_code}")
         else:
           logger.info("[board-vendor-skip] supplier_code not resolved from product_no")
+
+      elif bno == 2:
+        # 브로드캐스트
+        SU.post_text(self.broadcast, text)
 
       logger.info(f"[board-ok] board={board_no} post={post_no} writer={writer} route={route}")
       return True

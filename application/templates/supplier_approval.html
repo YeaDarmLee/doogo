@@ -2,69 +2,139 @@
 {% include './common/header.html' %}
 
 <script>
-  // HTML 이스케이프 유틸 (supplier.html과 동일 스타일)
-  function escapeHtml(s) {
-    return String(s || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
-
-  // 상태 배지
-  function badge(state) {
-    const s = (state || '').toUpperCase();
-    if (s === 'A') return '<span class="badge bg-success">A</span>';
-    if (s === 'R') return '<span class="badge bg-secondary">R</span>';
-    return '<span class="badge bg-warning text-dark">P</span>';
-  }
-
-  // 승인 처리: 알림 → Cafe24 공급사 생성 → 승인 API → 리로드
-  async function approveSupplier(seq) {
-    if (!seq) return;
-
-    const res = await Swal.fire({
-      title: '공급사를 승인하시겠습니까?',
-      text: '공급사 승인 후 Cafe24에 공급사가 등록됩니다.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonText: '승인',
-      cancelButtonText: '취소',
-      reverseButtons: true
-    });
-    if (!res.isConfirmed) return;
-
-    try {
-      // 1) Cafe24 관리자 API로 공급사 생성 (백엔드 프록시 사용)
-      const c = await fetch('/supplier/ajax/cafe24/createSupplier', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ seq })
-      });
-      const cj = await c.json();
-      if (c.status !== 200 || cj.code !== 20000) {
-        Swal.fire({ icon:'error', title:'Cafe24 등록 실패', text: cj.message || '공급사 생성 중 문제가 발생했습니다.' });
-        return;
-      }
-
-      // 2) 승인(A) 반영
-      const r = await fetch('/supplier/ajax/approval/set', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ seq, action: 'approve' })
-      });
-      const js = await r.json();
-      if (js.code === 20000) {
-        await Swal.fire({ icon:'success', title:'승인 완료', text:'Slack 생성 프로세스가 바로 실행됩니다.' });
-        location.reload();
-      } else {
-        Swal.fire({ icon:'error', title:'승인 실패', text: js.message || '처리 중 문제가 발생했습니다.' });
-      }
-    } catch (e) {
-      Swal.fire({ icon:'error', title:'네트워크 오류', text:'잠시 후 다시 시도해 주세요.' });
+  (function () {
+    // --- utils ---
+    function setRequired(id, on) {
+      var x = document.getElementById(id);
+      if (!x) return;
+      if (on) x.setAttribute('required', '');
+      else { x.removeAttribute('required'); x.value = ''; }
     }
-  }
+    function toggleTemplateFields() {
+      var tplEl = document.getElementById('contractTemplate');
+      var v = ((tplEl && tplEl.value) || '').toUpperCase();
+      var a = document.getElementById('contractAFields');
+      var b = document.getElementById('contractBFields');
+      if (a) a.classList.toggle('d-none', v !== 'A');
+      if (b) b.classList.toggle('d-none', v !== 'B');
+      setRequired('contractPercent', v === 'A');
+      setRequired('contractThreshold', v === 'B');
+      setRequired('contractPercentUnder', v === 'B');
+      setRequired('contractPercentOver', v === 'B');
+    }
+    function jsonFetch(url, payload) {
+      return fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload || {})
+      }).then(function (r) {
+        return r.text().then(function (t) {
+          var j = {};
+          try { j = t ? JSON.parse(t) : {}; } catch(e) {}
+          return { ok: r.ok, status: r.status, body: j };
+        });
+      });
+    }
+    // SweetAlert2 헬퍼
+    function swAlert(icon, title, text) {
+      return Swal.fire({ icon: icon, title: title, text: text });
+    }
+    function swConfirm(title, text) {
+      return Swal.fire({
+        title: title,
+        text: text,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: '확인',
+        cancelButtonText: '취소',
+        reverseButtons: true
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      var currentSeq = null;
+      var modalEl = document.getElementById('approveModal');
+      var modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+      var form = document.getElementById('approveForm');
+      var btnSubmit = document.getElementById('submitApproval');
+      var tpl = document.getElementById('contractTemplate');
+
+      // open modal (delegation)
+      document.addEventListener('click', function (e) {
+        var btn = e.target.closest('.btn-approve');
+        if (!btn) return;
+        e.preventDefault();
+        currentSeq = Number(btn.getAttribute('data-seq') || 0);
+        if (!currentSeq) { swAlert('error','오류','SEQ가 없습니다.'); return; }
+        form && form.reset();
+        toggleTemplateFields();
+        modal && modal.show();
+      });
+
+      // template change
+      tpl && tpl.addEventListener('change', toggleTemplateFields);
+
+      // submit (no async/await)
+      btnSubmit && btnSubmit.addEventListener('click', function () {
+        if (!form) return;
+        if (!currentSeq) { swAlert('error','오류','SEQ가 없습니다.'); return; }
+
+        if (typeof form.reportValidity === 'function' && !form.reportValidity()) return;
+
+        var payload = Object.fromEntries(new FormData(form).entries());
+        payload.seq = currentSeq;
+
+        var t = (payload.contractTemplate || '').toUpperCase();
+        if (!t) { swAlert('warning','안내','계약서 유형을 선택해 주세요.'); return; }
+        if (!payload.settlementPeriod) { swAlert('warning','안내','정산 주기를 선택해 주세요.'); return; }
+        if (t === 'A') {
+          var p = parseFloat(payload.contractPercent || '');
+          if (isNaN(p) || p < 0 || p > 100) { swAlert('warning','안내','A형 수수료(%)는 0~100 사이여야 합니다.'); return; }
+        } else if (t === 'B') {
+          var th = parseInt(payload.contractThreshold || '', 10);
+          var pu = parseFloat(payload.contractPercentUnder || '');
+          var po = parseFloat(payload.contractPercentOver || '');
+          if (isNaN(th) || th < 0 || isNaN(pu) || pu < 0 || pu > 100 || isNaN(po) || po < 0 || po > 100) {
+            swAlert('warning','안내','B형 임계금액/수수료(%) 입력을 확인해 주세요.');
+            return;
+          }
+        }
+
+        swConfirm('공급사를 승인하시겠습니까?', '입력한 옵션으로 Cafe24 등록 및 승인 처리를 진행합니다.')
+          .then(function (res) {
+            if (!res.isConfirmed) return;
+
+            // 1) 카페24 생성
+            return jsonFetch('/supplier/ajax/cafe24/createSupplier', payload)
+              .then(function (res1) {
+                if (!(res1.status === 200 && res1.body && res1.body.code === 20000)) {
+                  var msg1 = (res1.body && (res1.body.message || res1.body.detail)) || '처리 중 오류가 발생했습니다.';
+                  throw new Error('Cafe24 등록 실패: ' + msg1);
+                }
+                // 2) 최종 승인 반영
+                return jsonFetch('/supplier/ajax/approval/set', { seq: currentSeq, action: 'approve' });
+              })
+              .then(function (res2) {
+                if (!(res2.status === 200 && res2.body && res2.body.code === 20000)) {
+                  var msg2 = (res2.body && (res2.body.message || res2.body.detail)) || '처리 중 오류가 발생했습니다.';
+                  throw new Error('승인 실패: ' + msg2);
+                }
+                return Swal.fire({ icon:'success', title:'승인 완료', text:'Slack 생성 프로세스를 시작합니다.' });
+              })
+              .then(function () {
+                if (modal) modal.hide();
+                location.reload();
+              });
+          })
+          .catch(function (err) {
+            swAlert('error','오류', String(err && err.message || err));
+          });
+      });
+
+      // 초기 상태
+      toggleTemplateFields();
+    });
+  })();
 </script>
 
 <body id="page-top">
@@ -76,7 +146,7 @@
         <div class="container-fluid">
           <!-- Page Heading -->
           <h1 class="h3 mb-2 text-gray-800">공급사 승인</h1>
-          <p class="mb-4">대기(P)/반려(R) 공급사를 검토 후 승인 처리합니다.</p>
+          <p class="mb-4">대기(P)/반려(R) 공급사를 검토 후 옵션(계약서/수수료/정산주기) 선택 뒤 승인 처리합니다.</p>
 
           <!-- 리스트 카드 -->
           <div class="card shadow mb-4">
@@ -91,7 +161,6 @@
                     <tr>
                       <th>SEQ</th>
                       <th>회사명</th>
-                      <th>상태</th>
                       <th>담당자</th>
                       <th>연락처</th>
                       <th>이메일</th>
@@ -103,27 +172,109 @@
                       <tr data-seq="{{ s.seq }}">
                         <td>{{ s.seq }}</td>
                         <td>{{ s.companyName }}</td>
-                        <td>{{ s.stateCode | state_text }}</td>
                         <td>{{ s.manager }}</td>
                         <td>{{ s.number }}</td>
                         <td>{{ s.email }}</td>
                         <td>
-                          <a href="#"
-                             class="d-sm-inline-block btn btn-sm btn-success shadow-sm"
-                             onclick="approveSupplier({{ s.seq }}); return false;">승인</a>
+                          <a href="#" class="btn btn-sm btn-success shadow-sm btn-approve" data-seq="{{ s.seq }}">승인</a>
                         </td>
                       </tr>
                     {% endfor %}
                   </tbody>
                 </table>
               </div>
-              <!-- 서버에서 대기/반려만 내려주면 단순합니다. 필요시 필터 추가 가능 -->
+              <!-- 서버에서 대기/반려만 내려주면 단순. 필요 시 필터 추가 가능 -->
             </div>
           </div>
         </div>
       </div>
 
       {% include './common/copyright.html' %}
+    </div>
+  </div>
+
+  <!-- 승인 옵션 모달 -->
+  <div class="modal fade" id="approveModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">공급사 승인 옵션</h5>
+          <button class="close" type="button" data-dismiss="modal"><span>×</span></button>
+        </div>
+
+        <div class="modal-body">
+
+          <form id="approveForm">
+            <!-- 계약서 유형 -->
+            <div class="form-group mb-3 text-start">
+              <label for="contractTemplate" class="form-label">계약서 유형</label>
+              <select class="form-control" id="contractTemplate" name="contractTemplate" required>
+                <option value="">선택</option>
+                <option value="A">A형 (단일 퍼센트)</option>
+                <option value="B">B형 (임계금액 + 구간별 퍼센트)</option>
+              </select>
+              <div class="invalid-feedback">계약서 유형을 선택해 주세요.</div>
+            </div>
+
+            <!-- A형: 단일 퍼센트 -->
+            <div id="contractAFields" class="d-none">
+              <div class="form-group mb-3 text-start">
+                <label for="contractPercent" class="form-label">수수료(%)</label>
+                <input type="number" step="0.01" min="0" max="100"
+                       class="form-control"
+                       id="contractPercent" name="contractPercent"
+                       placeholder="0~100 사이(예: 15)">
+                <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+              </div>
+            </div>
+
+            <!-- B형: 임계금액 + 이하/초과 퍼센트 -->
+            <div id="contractBFields" class="d-none">
+              <div class="form-group mb-3 text-start">
+                <label for="contractThreshold" class="form-label">임계금액(원)</label>
+                <input type="number" step="1" min="0"
+                       class="form-control"
+                       id="contractThreshold" name="contractThreshold"
+                       placeholder="예: 1000000">
+                <div class="invalid-feedback">0 이상의 금액을 입력해 주세요.</div>
+              </div>
+              <div class="form-group mb-3 text-start">
+                <label for="contractPercentUnder" class="form-label">이하 수수료(%)</label>
+                <input type="number" step="0.01" min="0" max="100"
+                       class="form-control"
+                       id="contractPercentUnder" name="contractPercentUnder"
+                       placeholder="0~100 사이(예: 10)">
+                <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+              </div>
+              <div class="form-group mb-0 text-start">
+                <label for="contractPercentOver" class="form-label">초과 수수료(%)</label>
+                <input type="number" step="0.01" min="0" max="100"
+                       class="form-control"
+                       id="contractPercentOver" name="contractPercentOver"
+                       placeholder="0~100 사이(예: 15)">
+                <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+              </div>
+            </div>
+
+            <!-- 정산 주기 -->
+            <div class="form-group mt-3 text-start">
+              <label for="settlementPeriod" class="form-label">정산 주기</label>
+              <select class="form-control" id="settlementPeriod" name="settlementPeriod" required>
+                <option value="">선택</option>
+                <option value="D">일 단위</option>
+                <option value="W">주 단위</option>
+                <option value="M">월 단위</option>
+              </select>
+              <div class="invalid-feedback">정산 주기를 선택해 주세요.</div>
+            </div>
+          </form>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-dismiss="modal">취소</button>
+          <button id="submitApproval" type="button" class="btn btn-success">승인</button>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -21,13 +21,15 @@ CREATE TABLE `SUPPLIER_LIST` (
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='공급사 목록 테이블';
 
 -- SupplierList 테이블 확장 예시 (DDL)
-ALTER TABLE dbdoogobiz.SUPPLIER_LIST
+ALTER TABLE SUPPLIER_LIST
   ADD COLUMN contract_template VARCHAR(20) NULL COMMENT 'A(단일%)|B(구간%)',
   ADD COLUMN contract_percent DECIMAL(5,2) NULL COMMENT 'A용: 단일 수수료(%)',
   ADD COLUMN contract_threshold BIGINT NULL COMMENT 'B용: 특정 금액(원)',
   ADD COLUMN contract_percent_over DECIMAL(5,2) NULL COMMENT 'B용: 초과 시 %',
   ADD COLUMN contract_percent_under DECIMAL(5,2) NULL COMMENT 'B용: 이하 시 %',
   ADD COLUMN contract_skip TINYINT(1) DEFAULT 0 COMMENT '외부에서 이미 체결(발송 스킵)';
+ALTER TABLE SUPPLIER_LIST
+  ADD COLUMN SETTLEMENT_PERIOD VARCHAR(10) NULL COMMENT '정산주기(D/W/M)';
 
 -- Cafe24 웹훅 이벤트 저장 테이블
 CREATE TABLE IF NOT EXISTS webhook_events (
