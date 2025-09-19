@@ -12,7 +12,7 @@ EMAIL_FROM = os.getenv("INVITE_EMAIL_FROM", "noreply@example.com")
 
 def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> bool:
   if not (SMTP_HOST and SMTP_PORT and EMAIL_FROM and to):
-    print(f"[mailer] missing SMTP config or recipient. to={to}")
+    print(f"[email_service] missing SMTP config or recipient. to={to}")
     return False
 
   msg = EmailMessage()
@@ -30,8 +30,8 @@ def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> 
       if SMTP_USER and SMTP_PASS:
         s.login(SMTP_USER, SMTP_PASS)
       s.send_message(msg)
-    print(f"[mailer] sent ok to={to} subject={subject}")
+    print(f"[email_service] sent ok to={to} subject={subject}")
     return True
   except Exception as e:
-    print(f"[mailer] send fail to={to} err={e}")
+    print(f"[email_service] send fail to={to} err={e}")
     return False

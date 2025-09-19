@@ -7,7 +7,8 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 
 from application.src.models import db
-from application.src.models.SupplierList import SupplierList
+from application.src.repositories.SupplierListRepository import SupplierListRepository
+
 from application.src.utils import template as TEMPLATE
 from application.src.service import slack_service as SU
 
@@ -57,12 +58,7 @@ def handle_eformsign_webhook():
     return jsonify({"ok": True, "skipped": "editor_id missing"}), 200
 
   try:
-    supplier: SupplierList | None = (
-      db.session.query(SupplierList)
-      .filter(SupplierList.email == editor_email)
-      .order_by(SupplierList.seq.desc())
-      .first()
-    )
+    supplier = SupplierListRepository.find_by_email(editor_email)
   except Exception as e:
     print(f"[{datetime.now()}] [DB_ERROR] find supplier by email failed err={e}")
     return jsonify({"ok": False, "error": "db lookup failed"}), 500

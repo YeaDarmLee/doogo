@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
 
 from application.src.models.SupplierList import SupplierList
-from application.src.service.mailer import send_email
+from application.src.service.email_service import send_email
 from application.src.utils import template as TEMPLATE
 from application.src.service import slack_service as SU
 

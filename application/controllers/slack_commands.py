@@ -8,9 +8,10 @@ from typing import Optional
 from slack_sdk import WebClient
 
 from application.src.service.slack_verify import verify_slack_request
-from application.src.service.sales_service import fetch_sales_summary, first_day_of_month
-from application.src.repositories.SupplierListRepository import SupplierListRepository
+from application.src.service.slack_sales_service import fetch_sales_summary, first_day_of_month
 from application.src.service.settlement_service import make_settlement_excel, prev_month_range
+
+from application.src.repositories.SupplierListRepository import SupplierListRepository
 
 slack_commands = Blueprint("slack_commands", __name__, url_prefix="/slack/commands")
 

@@ -145,3 +145,13 @@ class SupplierListRepository:
       .values(**payload)
     )
     db.session.commit()
+    
+  @staticmethod
+  def find_by_email(editor_email: str) -> Optional[SupplierList]:
+    """
+    이메일 기준으로 최신(seq DESC) 공급사 조회
+    :param editor_email: 공급사 담당자 이메일
+    :return: SupplierList 또는 None
+    """
+    stmt = select(SupplierList).where(SupplierList.email == editor_email)
+    return db.session.execute(stmt).scalar_one_or_none()
