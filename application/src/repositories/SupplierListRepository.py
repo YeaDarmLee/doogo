@@ -8,6 +8,7 @@ from application.src.models.SupplierList import SupplierList
 STATE_PENDING  = "R"   # 승인 대기
 STATE_APPROVED = "RA"  # 승인 완료
 STATE_REJECTED = "RR"  # 반려
+STATE_DELETED = "D"    # 삭제
 
 class SupplierListRepository:
   @staticmethod
