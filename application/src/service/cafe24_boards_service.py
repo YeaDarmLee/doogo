@@ -134,42 +134,145 @@ class Cafe24BoardsService:
   # ---------------- content cleaners ----------------
   def _parse_board2_application(self, html_str: str) -> Dict[str, str]:
     """
-    보드 2(공급사 입점): <div class="item-tit">제목</div><div class="item-cont">값</div> 쌍 파싱 → {제목: 값}
+    섹션 인지 파싱:
+    - 섹션1(사업자): 정상 라벨 → biz_* 키
+    - 섹션2(담당자/상품): 정상 라벨 → mgr_*/상품 키
+    - 섹션3(정산/세금계산서): 현행 라벨(담당자명/직책/연락처)을 의미 기준으로 → settle_bank/settle_account/tax_email
     """
     result: Dict[str, str] = {}
     if not html_str:
       return result
-    pattern = re.compile(
-      r'<div\s+class="item-tit">\s*(.*?)\s*</div>\s*<div\s+class="item-cont">\s*(.*?)\s*</div>',
-      flags=re.IGNORECASE | re.DOTALL
+
+    sec_pat = re.compile(r"<section[^>]*>(.*?)</section>", re.I | re.S)
+    title_pat = re.compile(r'<div\s+class="se-title">\s*(.*?)\s*</div>', re.I | re.S)
+    pair_pat  = re.compile(
+      r'<div\s+class="item-tit">\s*(.*?)\s*</div>\s*'
+      r'<div\s+class="item-cont">\s*(.*?)\s*</div>',
+      re.I | re.S
     )
-    for m in pattern.finditer(html_str):
-      k_raw, v_raw = m.group(1), m.group(2)
-      k = html_to_text(k_raw)
-      v = html_to_text(v_raw)
-      if k:
-        result[k] = v
+
+    def norm(s: str) -> str:
+      return (html_to_text(s) or "").strip()
+
+    MAP_BIZ = {
+      "상호명": "biz_company_name",
+      "대표자명": "biz_representative",
+      "사업자번호": "biz_reg_no",
+      "업종/업태": "biz_type",
+      "사업자주소": "biz_addr",
+      "사업자전화번호": "biz_phone",
+    }
+    MAP_CONTACT = {
+      "담당자명": "mgr_name",
+      "직책": "mgr_title",
+      "연락처": "mgr_phone",
+      "슬랙 초대 받을 이메일": "slack_email",
+      "상품 공급 유형": "supply_type",
+      "주력 카테고리": "main_category",
+      "주력 상품 URL": "main_product_url",
+      "운영중인 홈페이지 및 쇼핑몰 URL": "homepage_url",
+      "공급사 택배 마감시간": "ship_cutoff",
+    }
+    # ★ 섹션3 현재 라벨을 의미에 맞게 강제 매핑
+    MAP_SETTLE = {
+      "담당자명": "settle_bank",     # 예: 카카오뱅크
+      "직책": "settle_account",       # 예: 00000000000
+      "연락처": "tax_email",          # 예: gnswpwhrqkf3@gmail.com
+      "문의 사항": "inquiry",
+    }
+
+    def which_section(title: str) -> str:
+      t = (title or "").replace(" ", "")
+      if "사업자" in t:
+        return "biz"
+      if "담당자" in t and "상품" in t:
+        return "contact"
+      if "정산" in t or "세금계산서" in t or "통장" in t:
+        return "settle"
+      return "unknown"
+
+    for sec in sec_pat.finditer(html_str):
+      block = sec.group(1)
+      tit_m = title_pat.search(block)
+      sec_title = norm(tit_m.group(1)) if tit_m else ""
+      kind = which_section(sec_title)
+
+      pairs = [(norm(a), norm(b)) for a, b in pair_pat.findall(block)]
+
+      if kind == "biz":
+        for k, v in pairs:
+          std = MAP_BIZ.get(k)
+          if std:
+            result[std] = v
+
+      elif kind == "contact":
+        for k, v in pairs:
+          std = MAP_CONTACT.get(k)
+          if std:
+            result[std] = v
+
+      elif kind == "settle":
+        for k, v in pairs:
+          std = MAP_SETTLE.get(k)
+          if std:
+            result[std] = v
+
+      else:
+        # 분석용 백업(미지정 섹션) — 충돌 없게 기존 키 없을 때만 저장
+        for k, v in pairs:
+          if k and v and k not in result:
+            result[k] = v
+
     return result
 
   def _format_board2_application(self, parsed: Dict[str, str]) -> List[str]:
-    """보드 2 파싱 결과를 Slack용 라인 배열로 정리"""
-    fields = [
-      ("회사명", "회사명"),
-      ("상품 공급 유형", "상품 공급 유형"),
-      ("주력 카테고리", "주력 카테고리"),
-      ("주력 상품 정보", "주력 상품 정보"),
-      ("자사몰 URL", "자사몰 URL"),
-      ("담당자명", "담당자명"),
-      ("직책", "직책"),
-      ("연락처", "연락처"),
-      ("이메일", "이메일"),
-      ("문의사항", "문의사항"),
-    ]
+    """
+    Slack 표시: 반드시 섹션별 표준 키만 사용 → 충돌/오염 방지
+    """
     lines: List[str] = []
-    for label, key in fields:
-      val = (parsed.get(key) or "").strip()
-      if val:
-        lines.append(f"{label}: {val}")
+
+    biz = [
+      ("상호명", parsed.get("biz_company_name")),
+      ("대표자명", parsed.get("biz_representative")),
+      ("사업자번호", parsed.get("biz_reg_no")),
+      ("업종/업태", parsed.get("biz_type")),
+      ("사업자주소", parsed.get("biz_addr")),
+      ("사업자전화번호", parsed.get("biz_phone")),
+    ]
+    b = [f"{k}: {v.strip()}" for k, v in biz if (v or "").strip()]
+    if b:
+      lines.append("[사업자 정보]")
+      lines.extend(b)
+
+    contact = [
+      ("담당자명", parsed.get("mgr_name")),
+      ("직책", parsed.get("mgr_title")),
+      ("연락처", parsed.get("mgr_phone")),
+      ("슬랙 초대 이메일", parsed.get("slack_email")),
+      ("상품 공급 유형", parsed.get("supply_type")),
+      ("주력 카테고리", parsed.get("main_category")),
+      ("주력 상품 URL", parsed.get("main_product_url")),
+      ("자사몰/쇼핑몰 URL", parsed.get("homepage_url")),
+      ("택배 마감시간", parsed.get("ship_cutoff")),
+    ]
+    c = [f"{k}: {v.strip()}" for k, v in contact if (v or "").strip()]
+    if c:
+      if lines: lines.append("")
+      lines.append("[담당자·상품]")
+      lines.extend(c)
+
+    settle = [
+      ("정산 은행명", parsed.get("settle_bank")),
+      ("정산 계좌번호", parsed.get("settle_account")),
+      ("세금계산서 이메일", parsed.get("tax_email")),
+      ("문의사항", parsed.get("inquiry")),
+    ]
+    s = [f"{k}: {v.strip()}" for k, v in settle if (v or "").strip()]
+    if s:
+      if lines: lines.append("")
+      lines.append("[정산·세금계산서]")
+      lines.extend(s)
+
     return lines
 
   # ---------------- builders ----------------
@@ -180,20 +283,29 @@ class Cafe24BoardsService:
   # ---------------- persistence (보드2 자동 저장) ----------------
   def _persist_supplier_application(self, parsed: Dict[str, str]) -> Optional[SupplierList]:
     """
-    보드 2 파싱 결과를 SupplierList로 저장(승인 대기 'R')
-    필드 길이 제약을 안전하게 잘라 저장.
+    저장 우선순위(현행 입력 스키마에 정확히 맞춤):
+    - 이메일: slack_email → tax_email
+    - 연락처: mgr_phone → biz_phone
+    - URL: homepage_url → main_product_url
     """
     try:
+      company = sanitize_company_name(parsed.get("biz_company_name"))
+      supplier_url = (parsed.get("homepage_url") or parsed.get("main_product_url") or "").strip()
+      manager = (parsed.get("mgr_name") or "").strip()
+      manager_rank = (parsed.get("mgr_title") or "").strip()
+      phone = (parsed.get("mgr_phone") or parsed.get("biz_phone") or "").strip()
+      email = (parsed.get("slack_email") or parsed.get("tax_email") or "").strip()
+
       entity = SupplierList(
-        companyName = safe_trunc(sanitize_company_name(parsed.get("회사명")), 100),
-        supplierURL = safe_trunc(parsed.get("자사몰 URL"), 255),
-        manager     = safe_trunc(parsed.get("담당자명"), 100),
-        managerRank = safe_trunc(parsed.get("직책"), 50),
-        number      = safe_trunc(parsed.get("연락처"), 50),
-        email       = safe_trunc(parsed.get("이메일"), 255),
-        stateCode   = STATE_WAITING_REVIEW,
-        contractTemplate   = "A",
-        contractPercent   = "15",
+        companyName = safe_trunc(company, 100),
+        supplierURL = safe_trunc(supplier_url, 255),
+        manager     = safe_trunc(manager, 100),
+        managerRank = safe_trunc(manager_rank, 50),
+        number      = safe_trunc(phone, 50),
+        email       = safe_trunc(email, 255),
+        stateCode   = STATE_WAITING_REVIEW,  # 'R'
+        contractTemplate = "A",
+        contractPercent  = "15",
       )
       saved = SupplierListRepository.save(entity)
       logger.info(f"[board2-save-ok] seq={saved.seq} company={saved.companyName!r} state={saved.stateCode}")
