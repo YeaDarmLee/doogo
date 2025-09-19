@@ -8,7 +8,7 @@ from pytz import timezone
 
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 
-from application.src.utils.slack_utils import post_text
+from application.src.service import slack_service as SU
 from application.src.utils.cafe24_utils import coalesce, parse_kst, fmt_money
 
 _KST = timezone('Asia/Seoul')
@@ -72,10 +72,10 @@ class Cafe24ProductsService:
     supplier_code = d.get("supplier_code") or ""
     msg = self._build_message(d, topic or "products/created")
 
-    post_text(SLACK_BROADCAST_CHANNEL_ID, msg)
+    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, msg)
     try:
       supplier = SupplierListRepository.findBySupplierCode(supplier_code)
-      post_text(supplier.channelId, msg)
+      SU.post_text(supplier.channelId, msg)
     except Exception as e:
       # 로깅은 Flask logger에 맡기는 편이 깔끔하지만 여기선 안전하게 print
       print(f"[products.notify][fail] ch={supplier_code} err={e}")

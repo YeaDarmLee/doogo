@@ -5,17 +5,13 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pytz import timezone
 
-from slack_sdk import WebClient as _SlackClient
-from application.src.service import slackService as _slack_svc
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 
-from application.src.utils.slack_utils import post_text
+from application.src.service import slack_service as SU
 from application.src.utils.cafe24_utils import (
   coalesce, parse_kst, fmt_money, humanize_event, humanize_shipping
 )
 
-_slack_client = getattr(_slack_svc, "client", None)
-_KST = timezone('Asia/Seoul')
 SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
 
 class Cafe24OrdersService:
@@ -138,13 +134,13 @@ class Cafe24OrdersService:
 
     # 메시지
     text = self._build_message(meta, items, topic)
-    post_text(SLACK_BROADCAST_CHANNEL_ID, text)
+    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, text)
 
     # 전송
     for ch in channels:
       try:
         supplier = SupplierListRepository.findBySupplierCode(ch)
-        post_text(supplier.channelId, text)
+        SU.post_text(supplier.channelId, text)
       except Exception as e:
         print(f"[orders.notify][fail] ch={getattr(supplier, 'channelId', None)} err={e}")
 
@@ -212,7 +208,7 @@ class Cafe24OrdersService:
     text = "\n".join(lines)
 
     # 1) 방송 채널
-    post_text(SLACK_BROADCAST_CHANNEL_ID, text)
+    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, text)
 
     # 2) 공급사 채널
     for code in supplier_codes:
@@ -220,6 +216,6 @@ class Cafe24OrdersService:
         supplier = SupplierListRepository.findBySupplierCode(code)
         ch_id = getattr(supplier, "channelId", None)
         if ch_id:
-          post_text(ch_id, text)
+          SU.post_text(ch_id, text)
       except Exception as e:
         print(f"[orders.shipping][fail] supplier_code={code} err={e}")

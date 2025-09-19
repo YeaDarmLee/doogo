@@ -25,9 +25,9 @@ from application.src.scheduler import start_scheduler
 start_scheduler(app)
   
 # 블루프린트 및 라우트 관련 모듈 import (순환 참조 방지)
-from .controllers.main import main
-from .controllers.login import login
-from .controllers.supplier import supplier
+from application.controllers.main import main
+from application.controllers.login import login
+from application.controllers.supplier import supplier
 from application.controllers.eformsign_webhook import eformsign_webhook
 from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
 from application.controllers.slack_commands import slack_commands

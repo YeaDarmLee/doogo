@@ -374,6 +374,8 @@ def approval_bulk_set():
 # -----------------------------------
 @supplier.route("/ajax/cafe24/createSupplier", methods=["POST"])
 def cafe24_create_supplier():
+  import re, decimal
+  from decimal import Decimal
   data = request.get_json(silent=True) or {}
   seq = int(data.get("seq") or 0)
   if not seq:
@@ -388,14 +390,44 @@ def cafe24_create_supplier():
 
   # 안전 문자열
   def _safe(v):
+    # 문자열은 strip, 그 외(None 제외)는 그대로 반환
     return (v or "").strip() if isinstance(v, str) else (v if v is not None else "")
-  
+
+  # JSON 직렬화 안전 변환기 (dict/list 깊은 변환)
+  def _to_jsonable(obj):
+    if isinstance(obj, Decimal):
+      # 외부 API에는 문자열로 보내는 편이 안전 (정밀도 유지)
+      return str(obj)
+    if isinstance(obj, (list, tuple)):
+      return [ _to_jsonable(x) for x in obj ]
+    if isinstance(obj, dict):
+      return { k: _to_jsonable(v) for k, v in obj.items() }
+    return obj
+
+  # email 로컬파트로 user_id 만들기
+  def _user_id_from_email(email: str) -> str:
+    local = (email or "").split("@")[0].lower()
+    # 영문/숫자/언더스코어만 허용
+    local = re.sub(r"[^a-z0-9_]", "", local)
+    # 길이 제한(카페24는 4~16자 권장)
+    if len(local) < 4:
+      # 회사명으로 보강
+      fallback = re.sub(r"[^a-z0-9_]", "", (_safe(s.companyName) or "").lower())
+      local = (local + fallback)[:16]
+    if len(local) < 4:
+      local = f"vendor{seq}"[:16]
+    return local[:16]
+
+  # 커미션 템플릿 매핑 (Decimal 가능성 있음)
   template_map = {
     "A": s.contractPercent,
     "B": s.contractPercentOver,
   }
   commission = template_map.get(s.contractTemplate, None)
-    
+  if commission is not None and isinstance(commission, (int, float, Decimal)):
+    # 문자열로 변환해 전달(예: "15" 또는 "15.0")
+    commission = str(commission)
+
   # 1) 공급사 생성
   create_supplier_payload = {
     "shop_no": 1,
@@ -406,11 +438,13 @@ def cafe24_create_supplier():
         "name": _safe(s.manager),
         "email": _safe(s.email)
       }],
-      "trading_type": "D",
+      "trading_type": "D",            # 도매(예시)
       "company_name": _safe(s.companyName),
-      "commission": commission
+      # commission 은 스펙에 따라 문자열/숫자 허용; 여기서는 문자열로 전달
+      **({"commission": commission} if commission is not None else {})
     }
   }
+  create_supplier_payload = _to_jsonable(create_supplier_payload)
 
   suppliers_url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/suppliers"
 
@@ -428,13 +462,11 @@ def cafe24_create_supplier():
         "detail": body
       }), 200  # 프런트는 code로 판정
 
-    # supplier_code 안전 추출 (공식 응답은 보통 배열 형태)
+    # supplier_code 안전 추출
     supplier_code = None
     if isinstance(body, dict):
-      # 응답 케이스: {"suppliers":[{"supplier_code":"S00000001", ...}]}
       if "suppliers" in body and isinstance(body["suppliers"], list) and body["suppliers"]:
         supplier_code = body["suppliers"][0].get("supplier_code")
-      # 혹시 다른 키로 내려오는 변형 대비
       if not supplier_code:
         for k in ("supplier", "data", "result"):
           v = body.get(k)
@@ -450,29 +482,40 @@ def cafe24_create_supplier():
       }), 200
 
     # 2) 공급사 운영자(유저) 생성
-    # 필수 필드: user_id, supplier_code, password, permission_shop_no, user_name.shop_no, user_name.user_name
-    # - user_id는 소문자/숫자 4~16자 권장(문서 스펙) :contentReference[oaicite:1]{index=1}
+    # user_id 우선순위: 명시된 supplierID → email 로컬파트 파생
+    src_user_id = (_safe(s.supplierID) or "").lower()
+    if not src_user_id:
+      src_user_id = _user_id_from_email(_safe(s.email))
+
+    # 허용 문자/길이 보정
+    src_user_id = re.sub(r"[^a-z0-9_]", "", src_user_id)[:16]
+    if len(src_user_id) < 4:
+      src_user_id = _user_id_from_email(_safe(s.email))
+
     create_user_payload = {
       "request": {
-        "user_id": (_safe(s.supplierID) or "").lower(),
+        "user_id": src_user_id,
         "supplier_code": supplier_code,
         "password": _safe(s.supplierPW),
         "permission_shop_no": 1,
         "user_name": [
-            {
-                "shop_no": 1,
-                "user_name": _safe(s.manager) or _safe(s.companyName)
-            }
+          {
+            "shop_no": 1,
+            "user_name": _safe(s.manager) or _safe(s.companyName)
+          }
         ],
       }
     }
 
-    # 선택 필드가 있으면 보강
+    # 선택 필드 보강
     if _safe(s.email):
       create_user_payload["request"]["email"] = _safe(s.email)
-    # phone이 있으면 권장: 카페24는 형식 검증 강화되어 있어 국내형식이 아니면 422 가능
     if _safe(getattr(s, "number", "")):
-      create_user_payload["request"]["phone"] = _safe(s.number)
+      # 형식 검증(숫자/+, - 제거 등) 필요시 여기서 정규화
+      phone = re.sub(r"[^\d+]", "", _safe(s.number))
+      create_user_payload["request"]["phone"] = phone
+
+    create_user_payload = _to_jsonable(create_user_payload)
 
     users_url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/suppliers/users"
     resp2 = requests.post(users_url, headers=_cafe24_headers(), json=create_user_payload, timeout=20)
@@ -482,7 +525,6 @@ def cafe24_create_supplier():
       body2 = {"raw": resp2.text}
 
     if resp2.status_code not in (200, 201):
-      # 운영자 생성 실패 시에도 200으로 내려 code로 판정
       return jsonify({
         "code": 50021,
         "message": f"공급사 생성 성공, 운영자 생성 실패(status={resp2.status_code})",

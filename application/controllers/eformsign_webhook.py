@@ -8,44 +8,11 @@ from flask import Blueprint, request, jsonify
 
 from application.src.models import db
 from application.src.models.SupplierList import SupplierList
-
-from application.src.service.slackService import post_message_to_channel
-
-# 마지막 수단: slack_sdk 직접 사용 (토큰은 .env 의 SLACK_BOT_TOKEN)
-try:
-  from slack_sdk import WebClient as _SlackClient
-  _slack_client = _SlackClient(token=os.getenv("SLACK_BOT_TOKEN"))
-except Exception:
-  _slack_client = None
+from application.src.utils import template as TEMPLATE
+from application.src.service import slack_service as SU
 
 eformsign_webhook = Blueprint("eformsign_webhook", __name__)
 SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
-
-def _notify_slack(channel_id: str, text: str):
-  """
-  채널로 간단 알림 전송 (slackService 우선, 없으면 slack_sdk fallback)
-  """
-  if not channel_id or not text:
-    return False
-
-  # slackService 사용
-  try:
-    post_message_to_channel(channel_id, text)
-    return True
-  except Exception:
-    pass
-
-  # slack_sdk fallback
-  if _slack_client:
-    try:
-      _slack_client.chat_postMessage(channel=channel_id, text=text)
-      return True
-    except Exception:
-      pass
-
-  print(f"[{datetime.now()}] [SLACK_NOTIFY_FAIL] channel={channel_id} text={text[:200]}")
-  return False
-
 
 @eformsign_webhook.route("/webhooks/eformsign", methods=["POST"])
 def handle_eformsign_webhook():
@@ -125,20 +92,22 @@ def handle_eformsign_webhook():
 
       # Slack 알림 (doc_complete만)
       if supplier.channelId:
-        msg = (
-          f":page_with_curl: *계약서 작성 완료* / 공급사: {supplier.companyName} / 이메일: `{editor_email}` / 상태: {status}"
+        template_msg = TEMPLATE.render(
+          "eformsign_success",
+          supplier_name=supplier.companyName,
+          recipient_email=editor_email,
+          status=status,
         )
-        _notify_slack(supplier.channelId, msg)
-        _notify_slack(SLACK_BROADCAST_CHANNEL_ID, msg)
-        
-        text = (
-          f":tada: `{supplier.companyName}` 공급사 지원 채널이 생성되었습니다.\n"
-          f"관리자 링크 바로가기: https://eclogin.cafe24.com/Shop/?url=Init&login_mode=3\n"
-          f"아이디: `onedayboxb2b` / 공급사 ID: `{supplier.supplierID}` / PW: `{supplier.supplierPW}`\n"
-          f"첫 로그인 할 때 비밀번호 재설정이 나오니 로그인 후 원하시는 비밀번호로 셋팅해주시면 됩니다.:smile:\n"
-          f":round_pushpin: 운영 관련 공지와 사용 가이드는 <#C09DBG0UYCS> 및 <#C09EAJ46Z5J> 채널을 꼭 참고해주세요."
+        SU.post_text(supplier.channelId, template_msg)
+        SU.post_text(SLACK_BROADCAST_CHANNEL_ID, template_msg)
+
+        template_msg = TEMPLATE.render(
+          "created_success_tip",
+          supplier_name=supplier.companyName,
+          supplier_id=supplier.supplierID,
+          supplier_pw=supplier.supplierPW,
         )
-        _notify_slack(supplier.channelId, text=text)
+        SU.post_text(supplier.channelId, template_msg)
       else:
         print(f"[{datetime.now()}] [INFO] no channelId for seq={supplier.seq}, skip Slack notify")
 

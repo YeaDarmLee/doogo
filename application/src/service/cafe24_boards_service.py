@@ -9,7 +9,7 @@ import requests
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 from application.src.models.SupplierList import SupplierList  # ✅ DB 저장에 필요
 
-from application.src.utils.slack_utils import post_text
+from application.src.service import slack_service as SU
 from application.src.utils.text_utils import (
   html_to_text, clean_qa_review_content,
   safe_trunc, sanitize_company_name
@@ -295,6 +295,7 @@ class Cafe24BoardsService:
       manager_rank = (parsed.get("mgr_title") or "").strip()
       phone = (parsed.get("mgr_phone") or parsed.get("biz_phone") or "").strip()
       email = (parsed.get("slack_email") or parsed.get("tax_email") or "").strip()
+      supplier_id = email.split("@")[0] if email else ""
 
       entity = SupplierList(
         companyName = safe_trunc(company, 100),
@@ -303,6 +304,8 @@ class Cafe24BoardsService:
         managerRank = safe_trunc(manager_rank, 50),
         number      = safe_trunc(phone, 50),
         email       = safe_trunc(email, 255),
+        supplierID  = supplier_id,
+        supplierPW  = "qksksk1324$",
         stateCode   = STATE_WAITING_REVIEW,  # 'R'
         contractTemplate = "A",
         contractPercent  = "15",
@@ -379,7 +382,7 @@ class Cafe24BoardsService:
       text = self._build_text(msg_title, body_lines)
 
       # 1) 브로드캐스트
-      post_text(self.broadcast, text)
+      SU.post_text(self.broadcast, text)
 
       # 2) 공급사 채널 동시 전파(후기/문의)
       if route == "broadcast_and_vendor" and article:
@@ -388,7 +391,7 @@ class Cafe24BoardsService:
           supplier = SupplierListRepository.findBySupplierCode(supplier_code)
           if supplier and getattr(supplier, "channelId", None):
             try:
-              post_text(supplier.channelId, text)
+              SU.post_text(supplier.channelId, text)
             except Exception as e:
               logger.warning(f"[board-vendor-post-fail] code={supplier_code} ch={supplier.channelId} err={e}")
           else:

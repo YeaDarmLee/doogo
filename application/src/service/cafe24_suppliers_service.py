@@ -7,7 +7,7 @@ from pytz import timezone
 
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 
-from application.src.utils.slack_utils import post_text
+from application.src.service import slack_service as SU
 from application.src.utils.cafe24_utils import coalesce
 
 _KST = timezone('Asia/Seoul')
@@ -67,4 +67,4 @@ class Cafe24SuppliersService:
     text = self._build_message(d, topic)
     
     # 신규 공급사 등록 알림
-    post_text(SLACK_BROADCAST_CHANNEL_ID, text)
+    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, text)
