@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from flask import Blueprint, render_template, request, jsonify
 from sqlalchemy.exc import SQLAlchemyError
-import os, requests
+import os, requests, base64
 
 from application.src.models.SupplierList import SupplierList
 from application.src.repositories.SupplierListRepository import (
@@ -541,14 +541,508 @@ def cafe24_create_supplier():
 
     s.supplierCode = supplier_code
     SupplierListRepository.save(s)
+    # 3-bulk) 기본상품 등록 (HARDCODED PAYLOAD → Cafe24 제품 생성)
+    
+    ## Main Code (메인진열코드) ##
+    # 2:product_listmain_1: 반가운 신제품 소식-오직 원데이박스 B2B
+    # 3:product_listmain_2: 국내 배송
+    # 4:product_listmain_3: 해외에서 출고 되는 상품입니다
+    # 5:product_listmain_4: 채움앤비움
+    # 6:product_listmain_5: 두고푸드
+    # 7:product_listmain_6: 뉴질랜드배송
+    # 8:product_listmain_7: 원데이박스 사업자 특혜
+    # 9:product_listmain_8: 신제품 NEW
+    # 10:product_listmain_9: SHORTS
+    # 11:product_listmain_10: 대현
+    # 12:product_listmain_11: 탭5
+    # 13:product_listmain_12: 메인진열1
+    # 14:product_listmain_13: 메인진열2
+    # 15:product_listmain_14: 메인진열3
+    # 16:product_listmain_15: 메인진열4
+    # 17:product_listmain_16: 메인진열5
+    # 18:product_listmain_17: 메인진열6
+    # 19:product_listmain_18: 메인진열7
+    # 20:product_listmain_19: 메인진열8
+    # 21:product_listmain_20: 메인진열9
+    
+    ## User Group Code ##
+    # 1: 일반 회원
+    # 4: 멤버쉽 회원
+    # 5: 관리자
+    # 6: 총판
+    # 7: OEM
+    
+    ## Icon Code ##
+    # custom_9:단종
+    # custom_11:품절
+    # custom_7:해외배송
+    # custom_8:국내배송
+    # custom_10:재입고
+    # custom_14:배송지연
+    # custom_16:모든채널
+    # custom_17:무료배송
+    # custom_18:위탁배송
+    # custom_19:특가할인
+    # custom_20:폐쇄몰
+    # custom_21:약국전용
+    # custom_22:특가할인
+    try:
+      products_url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/products"
+      
+      ## product_1 ##
+      product_1_detail_image_list = cafe24_upload_images(["/web/application/static/img/thumb/product_1_detail_img.jpg"])
+      product_1_description = build_description_html(product_1_detail_image_list)
+      
+      product_1_image_list = cafe24_upload_images(["/web/application/static/img/thumb/product_1_img.png"])
+      product_1_image = "/web/upload/" + product_1_image_list[0].split("/web/upload/")[-1],
+      
+      product_1_add_image_paths = [
+        "/web/application/static/img/thumb/product_1_add_1_img.jpg",
+        "/web/application/static/img/thumb/product_1_add_2_img.jpg",
+        "/web/application/static/img/thumb/product_1_add_3_img.jpg",
+        "/web/application/static/img/thumb/product_1_add_4_img.jpg",
+        "/web/application/static/img/thumb/product_1_add_5_img.jpg",
+      ]
+      product_1_add_image_list = cafe24_upload_images(product_1_add_image_paths)
+
+      req1 = {
+        "shop_no": 1,
+        "request": {
+          ## 표시 설정 ##
+          "display": "F",                           # 진열상태
+          "selling": "F",                           # 판매상태
+          "add_category_no": [                      # 추가 분류 번호
+            {"category_no": 113, "recommend": "F", "new": "F"},
+            {"category_no": 132, "recommend": "F", "new": "F"},
+            {"category_no": 145, "recommend": "F", "new": "F"},
+            {"category_no": 340, "recommend": "F", "new": "F"}
+          ],
+          "main":                                   # 메인진열
+            [16],
+          "exposure_limit_type": "A",               # 표시제한 범위
+          
+          ## 기본 정보 ##
+          "product_name":                           # 상품명
+            "[테스트상품_가전제품] DS 무선 핸디 청소기 휴대식 청소기 차량 가정 겸용 X",
+          # "eng_product_name": "",                 # 영문 상품명
+          "internal_product_name":                  # 상품명(관리용)
+            "테스트상품_가전제품",
+          "supply_product_name":                    # 공급사 상품명
+            "[테스트상품_가전제품] DS 무선 핸디 청소기 휴대식 청소기 차량 가정 겸용",
+          "model_name":                             # 모델명
+            "[테스트상품_가전제품] DS 무선 핸디 청소기 휴대식 청소기 차량 가정 겸용",
+          # "custom_product_code": "",              # 자체상품 코드
+          "product_condition": "N",                 # 상품 상태
+          "summary_description":                    # 상품요약설명
+            "일반 소비자 가격이 있는 가전제품의 상품 등록 방법입니다.  [가전제품 공급사 확인]",
+          # "simple_description": "",               # 상품 간략 설명
+          "description":                            # 상품 상세설명
+            product_1_description,
+          # "mobile_description": "",               # 모바일 상품 상세설명
+          # "product_tag": "",                      # 검색어
+          "additional_information": [               # 추가항목
+            {"key": "custom_option1", "value": "국내배송"},     # 국내·해외배송
+            # {"key": "custom_option2", "value": ""},     # 유튜브 영상 ID
+            {"key": "custom_option5", "value": "온라인 l 오프라인"},     # 판매가능플랫폼
+            # {"key": "custom_option8", "value": ""},     # 유튜브 영상 삽입/링크
+            {"key": "custom_option9", "value": "1일"},     # 평균 배송 완료일
+            {"key": "custom_option10", "value": "https://1drv.ms/f/c/87241ec44506bab2/EqEh6mN2CZhOg5yABsJ3qeoB_yTfDIvJImj9RZJ6Qyxnmw?e=WUHkqE"},    # (new)상세 이미지 다운로드
+            # {"key": "custom_option12", "value": ""},    # (new)유튜브 영상 바로가기
+            # {"key": "custom_option13", "value": ""},    # (new)유튜브 영상 다운로드
+            # {"key": "custom_option14", "value": ""},    # (new)알집 다운로드
+            # {"key": "custom_option15", "value": ""},    # 10개 이상 구매 시
+            {"key": "custom_option16", "value": "제주 및 도서산간 배송 불가"},    # 배송비 추가문구
+            {"key": "custom_option17", "value": "공급사 배송"},    # 배송형태
+            {"key": "custom_option18", "value": "과세"},    # 과세구분
+            {"key": "custom_option19", "value": "오후 01시 00분"},    # 발주마감
+          ],
+          
+          ## 판매 정보 ##
+          "retail_price": "5000",             # 상품 소비자가
+          "supply_price": "500",              # 상품 공급가
+          "tax_type": "B",                    # 과세구분
+          "margin_rate": "20.00",             # 마진률
+          "price": "2000",                    # 상품 판매가
+          # "price_content": "",              # 판매가 대체문구
+          "buy_limit_by_product": "T",        # 구매제한 개별 설정여부
+          "buy_limit_type": "M",              # 구매제한
+          "buy_group_list":                   # 구매가능 회원 등급
+            [4, 5, 6, 7],
+          "single_purchase_restriction": "F", # 단독구매 제한
+          "single_purchase": "F",             # 단독구매 설정
+          "buy_unit_type": "O",               # 구매단위 타입
+          "buy_unit": 1,                      # 구매단위
+          "order_quantity_limit_type": "O",   # 주문수량 제한 기준
+          "minimum_quantity": 1,              # 최소 주문수량
+          "maximum_quantity": 0,              # 최대 주문수량
+          "points_by_product": "F",           # 적립금 개별설정 사용여부
+          # "points_setting_by_payment": "C",   # 결제방식별 적립금 설정 여부
+          # "points_amount": [                  # 적립금 설정 정보
+          #   {
+          #     "payment_method": "cash",
+          #     "points_rate": "100.00",
+          #     "points_unit_by_payment": "W"
+          #   },
+          #   {
+          #     "payment_method": "mileage",
+          #     "points_rate": "10.00",
+          #     "points_unit_by_payment": "P"
+          #   }
+          # ],
+                                              # 개별 결제수단 설정
+                                              # 할인혜택 설정
+          "except_member_points": "F",        # 회원등급 추가 적립 제외
+                                              # 공통이벤트 정보
+          "adult_certification": "F",         # 성인인증
+                                              # 다음 쇼핑하우 추가 홍보문구
+          
+          ## 옵션/재고 설정 ##
+          "has_option": "F",                  # 옵션 사용여부
+          
+          ## 이미지정보 ##
+          "image_upload_type": "A",           # 이미지 업로드 타입
+          "detail_image":                     # 상세이미지
+            product_1_image[0],
+          # "list_image": "",                 # 목록이미지
+          # "tiny_image": "",                 # 작은목록이미지
+          # "small_image": "",                # 축소이미지
+          "additional_image":                 # 추가이미지
+            product_1_add_image_list,
+          
+          ## 제작 정보 ##
+          "manufacturer_code": "M0000000",    # 제조사
+          "supplier_code": supplier_code,     # 공급사
+          "brand_code": "B0000000",           # 브랜드
+          "trend_code": "T0000000",           # 트렌드
+          "classification_code": "C000000A",  # 자체분류
+          # "made_date": "",                  # 제조일자
+          # "release_date": "",               # 출시일자
+          # "expiration_date": "",            # 유효기간
+          
+          "origin_classification": "F",       # 원산지
+          # "origin_place_no": "",            # 원산지 번호
+          # "origin_place_value": "",         # 원산지기타정보
+          "made_in_code": "KR",               # 원산지 국가코드
+          
+          # "size_guide": {                   # 사이즈 가이드
+          #     "use": "T",
+          #     "type": "default",
+          #     "default": "Male"
+          # },
+          # "product_volume": {               # 상품 부피 정보
+          #   "use_product_volume": "T",
+          #   "product_width": 3,
+          #   "product_height": 5.5,
+          #   "product_length": 7
+          # },
+          
+          "image_upload_type": "A",
+          
+          ## 상세 이용안내 ##
+          # "payment_info": "",               # 상품결제안내
+          # "shipping_info": "",              # 상품배송안내
+          # "exchange_info": "",              # 교환/반품안내
+          # "service_info": "",               # 서비스문의/안내
+          
+          ## 아이콘 설정 ##
+          "icon": [                           # 아이콘
+              "custom_16",
+              "custom_17",
+              "custom_18"
+          ],
+          
+          ## 배송 정보 ##
+          "shipping_scope": "A",              # 배송정보
+          # "shipping_fee_by_product": "F",     # 개별배송여부
+          # "shipping_method": "01",            # 배송방법
+          "product_weight": "1.00",           # 상품 전체중량
+          # "hscode": "4303101990",           # HS코드
+          # "country_hscode": {               # 국가별 HS 코드
+          #   "JPN": "430310011",
+          #   "CHN": "43031020"
+          # },
+          "product_shipping_type": "C",       # 상품 배송유형
+          
+          ## 추가구성상품 ##
+          
+          ## 관련상품 ##
+          
+          ## 검색엔진 최적화(SEO) ##
+          
+          ## 메모 ##
+        }
+      }
+      
+      respP1 = requests.post(
+        products_url,
+        headers=_cafe24_headers(),
+        json=_to_jsonable(req1),  # NaN/None/Decimal 안전 변환
+        timeout=30
+      )
+      try:
+        bodyP1 = respP1.json()
+      except Exception:
+        bodyP1 = {"raw": respP1.text}
+      
+      ## product_2 ##
+      product_2_detail_image_list = cafe24_upload_images(["/web/application/static/img/thumb/product_2_detail_img.jpg"])
+      product_2_description = build_description_html(product_2_detail_image_list)
+      
+      product_2_image_list = cafe24_upload_images(["/web/application/static/img/thumb/product_2_img.png"])
+      product_2_image = "/web/upload/" + product_2_image_list[0].split("/web/upload/")[-1],
+      
+      product_2_add_image_paths = [
+        "/web/application/static/img/thumb/product_2_add_1_img.jpg",
+        "/web/application/static/img/thumb/product_2_add_2_img.jpg",
+        "/web/application/static/img/thumb/product_2_add_3_img.jpg",
+        "/web/application/static/img/thumb/product_2_add_4_img.jpg",
+      ]
+      product_2_add_image_list = cafe24_upload_images(product_2_add_image_paths)
+
+      req2 = {
+        "shop_no": 1,
+        "request": {
+          ## 표시 설정 ##
+          "display": "F",                           # 진열상태
+          "selling": "F",                           # 판매상태
+          "add_category_no": [                      # 추가 분류 번호
+            {"category_no": 113, "recommend": "F", "new": "F"},
+            {"category_no": 132, "recommend": "F", "new": "F"},
+            {"category_no": 145, "recommend": "F", "new": "F"},
+            {"category_no": 340, "recommend": "F", "new": "F"}
+          ],
+          "main":                                   # 메인진열
+            [16],
+          "exposure_limit_type": "A",               # 표시제한 범위
+          
+          ## 기본 정보 ##
+          "product_name":                           # 상품명
+            "[테스트상품_여성의류] 페이퍼먼츠 셔츠형 허리 스모크 주름 베이직 롱 원피스 01924",
+          # "eng_product_name": "",                 # 영문 상품명
+          "internal_product_name":                  # 상품명(관리용)
+            "테스트상품_여성의류",
+          "supply_product_name":                    # 공급사 상품명
+            "[테스트상품_여성의류] 페이퍼먼츠 셔츠형 허리 스모크 주름 베이직 롱 원피스 01924",
+          "model_name":                             # 모델명
+            "[테스트상품_여성의류] 페이퍼먼츠 셔츠형 허리 스모크 주름 베이직 롱 원피스 01924",
+          # "custom_product_code": "",              # 자체상품 코드
+          "product_condition": "N",                 # 상품 상태
+          "summary_description":                    # 상품요약설명
+            "색상 옵션 2가지 있는 경우 상품 등록 방법입니다  [의류 판매 공급사 확인]",
+          # "simple_description": "",               # 상품 간략 설명
+          "description":                            # 상품 상세설명
+            product_2_description,
+          # "mobile_description": "",               # 모바일 상품 상세설명
+          # "product_tag": "",                      # 검색어
+          "additional_information": [               # 추가항목
+            {"key": "custom_option1", "value": "국내배송"},     # 국내·해외배송
+            # {"key": "custom_option2", "value": ""},     # 유튜브 영상 ID
+            {"key": "custom_option5", "value": "온라인 l 오프라인"},     # 판매가능플랫폼
+            # {"key": "custom_option8", "value": ""},     # 유튜브 영상 삽입/링크
+            {"key": "custom_option9", "value": "1일"},     # 평균 배송 완료일
+            {"key": "custom_option10", "value": "https://1drv.ms/f/c/87241ec44506bab2/EqEh6mN2CZhOg5yABsJ3qeoB_yTfDIvJImj9RZJ6Qyxnmw?e=WUHkqE"},    # (new)상세 이미지 다운로드
+            # {"key": "custom_option12", "value": ""},    # (new)유튜브 영상 바로가기
+            # {"key": "custom_option13", "value": ""},    # (new)유튜브 영상 다운로드
+            # {"key": "custom_option14", "value": ""},    # (new)알집 다운로드
+            # {"key": "custom_option15", "value": ""},    # 10개 이상 구매 시
+            {"key": "custom_option16", "value": "제주 및 도서산간 배송 불가"},    # 배송비 추가문구
+            {"key": "custom_option17", "value": "공급사 배송"},    # 배송형태
+            {"key": "custom_option18", "value": "과세"},    # 과세구분
+            {"key": "custom_option19", "value": "오후 01시 00분"},    # 발주마감
+          ],
+          
+          ## 판매 정보 ##
+          "retail_price": "5000",             # 상품 소비자가
+          "supply_price": "500",              # 상품 공급가
+          "tax_type": "B",                    # 과세구분
+          "margin_rate": "20.00",             # 마진률
+          "price": "2000",                    # 상품 판매가
+          # "price_content": "",              # 판매가 대체문구
+          "buy_limit_by_product": "T",        # 구매제한 개별 설정여부
+          "buy_limit_type": "M",              # 구매제한
+          "buy_group_list":                   # 구매가능 회원 등급
+            [4, 5, 6, 7],
+          "single_purchase_restriction": "F", # 단독구매 제한
+          "single_purchase": "F",             # 단독구매 설정
+          "buy_unit_type": "O",               # 구매단위 타입
+          "buy_unit": 1,                      # 구매단위
+          "order_quantity_limit_type": "O",   # 주문수량 제한 기준
+          "minimum_quantity": 1,              # 최소 주문수량
+          "maximum_quantity": 0,              # 최대 주문수량
+          "points_by_product": "F",           # 적립금 개별설정 사용여부
+          # "points_setting_by_payment": "C",   # 결제방식별 적립금 설정 여부
+          # "points_amount": [                  # 적립금 설정 정보
+          #   {
+          #     "payment_method": "cash",
+          #     "points_rate": "100.00",
+          #     "points_unit_by_payment": "W"
+          #   },
+          #   {
+          #     "payment_method": "mileage",
+          #     "points_rate": "10.00",
+          #     "points_unit_by_payment": "P"
+          #   }
+          # ],
+                                              # 개별 결제수단 설정
+                                              # 할인혜택 설정
+          "except_member_points": "F",        # 회원등급 추가 적립 제외
+                                              # 공통이벤트 정보
+          "adult_certification": "F",         # 성인인증
+                                              # 다음 쇼핑하우 추가 홍보문구
+          
+          ## 옵션/재고 설정 ##
+          "has_option": "T",                  # 옵션 사용여부
+          "option_type": "S",                 # 옵션 구성방식
+          "options": [
+              {
+                  "name": "Color",
+                  "value": [
+                      "네이비",
+                      "카라멜"
+                  ]
+              },
+              {
+                  "name": "Size",
+                  "value": [
+                      "S",
+                      "M",
+                      "L",
+                      "XL"
+                  ]
+              }
+          ],
+          
+          ## 이미지정보 ##
+          "image_upload_type": "A",           # 이미지 업로드 타입
+          "detail_image":                     # 상세이미지
+            product_2_image[0],
+          # "list_image": "",                 # 목록이미지
+          # "tiny_image": "",                 # 작은목록이미지
+          # "small_image": "",                # 축소이미지
+          "additional_image":                 # 추가이미지
+            product_2_add_image_list,
+          
+          ## 제작 정보 ##
+          "manufacturer_code": "M0000000",    # 제조사
+          "supplier_code": supplier_code,     # 공급사
+          "brand_code": "B0000000",           # 브랜드
+          "trend_code": "T0000000",           # 트렌드
+          "classification_code": "C000000A",  # 자체분류
+          # "made_date": "",                  # 제조일자
+          # "release_date": "",               # 출시일자
+          # "expiration_date": "",            # 유효기간
+          
+          "origin_classification": "F",       # 원산지
+          # "origin_place_no": "",            # 원산지 번호
+          # "origin_place_value": "",         # 원산지기타정보
+          "made_in_code": "KR",               # 원산지 국가코드
+          
+          # "size_guide": {                   # 사이즈 가이드
+          #     "use": "T",
+          #     "type": "default",
+          #     "default": "Male"
+          # },
+          # "product_volume": {               # 상품 부피 정보
+          #   "use_product_volume": "T",
+          #   "product_width": 3,
+          #   "product_height": 5.5,
+          #   "product_length": 7
+          # },
+          
+          "image_upload_type": "A",
+          
+          ## 상세 이용안내 ##
+          # "payment_info": "",               # 상품결제안내
+          # "shipping_info": "",              # 상품배송안내
+          # "exchange_info": "",              # 교환/반품안내
+          # "service_info": "",               # 서비스문의/안내
+          
+          ## 아이콘 설정 ##
+          "icon": [                           # 아이콘
+              "custom_16",
+              "custom_17",
+              "custom_18"
+          ],
+          
+          ## 배송 정보 ##
+          "shipping_scope": "A",              # 배송정보
+          # "shipping_fee_by_product": "F",     # 개별배송여부
+          # "shipping_method": "01",            # 배송방법
+          "product_weight": "1.00",           # 상품 전체중량
+          # "hscode": "4303101990",           # HS코드
+          # "country_hscode": {               # 국가별 HS 코드
+          #   "JPN": "430310011",
+          #   "CHN": "43031020"
+          # },
+          "product_shipping_type": "C",       # 상품 배송유형
+          
+          ## 추가구성상품 ##
+          
+          ## 관련상품 ##
+          
+          ## 검색엔진 최적화(SEO) ##
+          
+          ## 메모 ##
+        }
+      }
+      
+      respP2 = requests.post(
+        products_url,
+        headers=_cafe24_headers(),
+        json=_to_jsonable(req2),  # NaN/None/Decimal 안전 변환
+        timeout=30
+      )
+      try:
+        bodyP2 = respP2.json()
+      except Exception:
+        bodyP2 = {"raw": respP2.text}
+
+    except Exception as e:
+      print(e)
 
     return jsonify({
       "code": 20000,
       "result": {
         "supplier_create": body,
-        "user_create": body2
+        "user_create": body2,
+        "product_create_1": bodyP1,
+        "product_create_2": bodyP2
       }
     })
 
   except requests.RequestException as e:
     return jsonify({"code": 50012, "message": "Cafe24 호출 실패", "detail": str(e)}), 200
+
+def cafe24_upload_images(image_paths: list[str]) -> list[str]:
+  """
+  여러 이미지를 Cafe24에 업로드하고 업로드된 경로 리스트를 반환
+  :param image_paths: 로컬 이미지 파일 경로 리스트
+  :return: 업로드된 이미지 상대경로 리스트
+  """
+  payload = {"request": []}
+  for path in image_paths:
+    with open(path, "rb") as f:
+      b64 = base64.b64encode(f.read()).decode("ascii")
+    payload["request"].append({"image": b64})
+
+  url = f"{CAFE24_BASE_URL.rstrip('/')}/api/v2/admin/products/images"
+  r = requests.post(url, headers=_cafe24_headers(), json=payload, timeout=30)
+  r.raise_for_status()
+  data = r.json()
+  paths = [img["path"] for img in data.get("images", [])]
+
+  # 업로드 성공 시 각 이미지별 path 배열 반환
+  return paths
+
+def build_description_html(img_urls: list[str]) -> str:
+  """상품 상세설명 HTML 생성: 이미지 + 문단 텍스트"""
+  parts = []
+  # 이미지들
+  for url in img_urls:
+    # 절대/상대 모두 허용되지만, 되도록 절대 URL 사용 권장
+    parts.append(
+      '<figure style="margin:16px 0;text-align:center;">'
+      f'  <img src="{url}" loading="lazy" alt="" style="max-width:100%;height:auto;display:inline-block;">'
+      '</figure>'
+    )
+  return "\n".join(parts)
