@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 import os, hmac, hashlib, time, json
+import datetime, time
 from flask import Blueprint, request, current_app
 from slack_sdk.errors import SlackApiError
 from typing import Optional, List, Dict, Any  # 파일 상단에 추가
 
 from application.src.service.slack_service import ensure_client, _sleep_if_rate_limited
+from application.src.repositories.SupplierListRepository import SupplierListRepository
+
+from application.src.service.toss_service import create_payouts_encrypted
 
 slack_actions = Blueprint("slack_actions", __name__, url_prefix="/slack")
 
@@ -98,16 +102,16 @@ def _handle_payout_confirm(payload: dict, action: dict):
     val = {}
 
   # 필수값 체크
-  ref_id = val.get("settlement_id")   # refPayoutId
-  dest   = val.get("destination")     # seller id
-  sched  = val.get("schedule_type") or "EXPRESS"
-  amt_v  = int(val.get("amount_value") or 0)
-  amt_c  = val.get("amount_currency") or "KRW"
-  desc   = (val.get("transaction_description") or "정산")[:7]  # 최대 7자
-
-  if not (ch and ts and ref_id and dest and amt_v > 0):
-    _chat_update(ch, ts, text=":warning: 지급요청 파라미터가 올바르지 않습니다. 담당자에게 문의해 주세요.")
-    return
+  supply_id = val.get("supply_id")
+  channel   = val.get("channel")
+  start  = val.get("start")
+  end  = val.get("end")
+  final_amount  = int(val.get("final_amount") or 0)
+  
+  today = datetime.date.today()
+  payout_date = (today + datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+  
+  s = SupplierListRepository.findBySupplierCode(supply_id)
 
   # 처리 중 상태로 즉시 업데이트 (버튼 제거)
   _chat_update(
@@ -119,35 +123,36 @@ def _handle_payout_confirm(payload: dict, action: dict):
     }]
   )
 
-  # Toss 클라이언트
-  # toss = current_app.extensions.get("toss_client")
-  # if not toss:
-  #   _chat_update(ch, ts, text=":warning: 지급요청 클라이언트를 찾을 수 없습니다.")
-  #   return
-
   # 지급요청 바디 구성
   item = {
-    "refPayoutId": ref_id,
-    "destination": dest,
-    "scheduleType": sched,
-    "amount": {"currency": amt_c, "value": amt_v},
-    "transactionDescription": desc
+    "refPayoutId": f"PO-{s.supplierCode}-{int(time.time())}",
+    "destination": s.supplierCode,
+    "scheduleType": "SCHEDULED",
+    "payoutDate": payout_date,
+    "amount": {
+      "currency": "KRW",
+      "value": final_amount
+    },
+    "transactionDescription": "정산",
+    "metadata": {
+      "period": f"{start}-{end}"
+    }
   }
-  if sched == "SCHEDULED" and val.get("payout_date"):
-    item["payoutDate"] = val["payout_date"]
 
   # 요청 실행
   try:
-    # jwe = toss.request_payouts(item)  # ENCRYPTION(JWE) 응답 문자열
+    status, resp = create_payouts_encrypted(item)
+    print(status, json.dumps(resp, ensure_ascii=False, indent=2))
+    
     # 성공 메시지
     _chat_update(
       ch, ts,
-      text=":white_check_mark: 정산이 확정되어 지급 요청을 보냈습니다.",
+      text=":money_with_wings: 정산이 확정되어 지급 요청을 보냈습니다.",
       blocks=[{
         "type": "section",
         "text": {
           "type": "mrkdwn",
-          "text": f":white_check_mark: *정산 확정 완료*\n• 참조ID: `{ref_id}`\n• 대상: `{dest}`\n• 금액: {amt_v:,} {amt_c}\n• 방식: {sched}"
+          "text": f":money_with_wings: *정산 확정 완료*\n• 정산금액: `{final_amount}`\n• 정산 예정일: `{payout_date}`\n• 정산 기간: `{start}-{end}`"
         }
       }]
     )

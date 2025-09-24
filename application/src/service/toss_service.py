@@ -63,3 +63,70 @@ def create_seller_encrypted(seller_body: Dict[str, Any]) -> Tuple[int, Dict[str,
       return r.status_code, _decrypt_jwe(r.text)
     except Exception:
       return r.status_code, {"raw": r.text, "decryptError": True}
+# --- payout: 지급대행 요청 (ENCRYPTION) --------------------------------------
+from typing import List, Union
+
+def _validate_payout_item(item: Dict[str, Any]) -> None:
+  missing = [k for k in ["refPayoutId", "destination", "scheduleType", "amount", "transactionDescription"] if k not in item]
+  if missing:
+    raise ValueError(f"payout item 필수 필드 누락: {missing}")
+  st = item["scheduleType"]
+  if st not in ("EXPRESS", "SCHEDULED"):
+    raise ValueError("scheduleType은 'EXPRESS' 또는 'SCHEDULED' 이어야 합니다.")
+  if st == "SCHEDULED" and not item.get("payoutDate"):
+    raise ValueError("scheduleType=SCHEDULED 인 경우 payoutDate(yyyy-MM-dd)가 필수입니다.")
+  desc = item.get("transactionDescription", "")
+  if isinstance(desc, str) and len(desc) > 7:
+    raise ValueError("transactionDescription(적요)은 최대 7자입니다.")
+  amt = item["amount"]
+  if not isinstance(amt, dict) or "currency" not in amt or "value" not in amt:
+    raise ValueError("amount는 {'currency':'KRW','value':정수} 형태여야 합니다.")
+  if amt.get("currency") != "KRW":
+    raise ValueError("현재 통화는 KRW만 지원됩니다.")
+
+def create_payouts_encrypted(payouts: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Tuple[int, Dict[str, Any]]:
+  """
+  지급대행 요청 (배치 최대 100건)
+  - Endpoint: POST https://api.tosspayments.com/v2/payouts
+  - 보안: ENCRYPTION (요청/응답 모두 JWE)
+  - 입력: 단일 dict 또는 dict 리스트
+  - 출력: (status, 복호화된 응답 dict) — entityBody.items에 Payout 목록
+  """
+  url = "https://api.tosspayments.com/v2/payouts"
+
+  # 1) 리스트 화 + 유효성 체크
+  items: List[Dict[str, Any]] = payouts if isinstance(payouts, list) else [payouts]
+  if not items:
+    raise ValueError("payouts가 비어 있습니다.")
+  if len(items) > 100:
+    raise ValueError("한 번에 최대 100건까지 요청할 수 있습니다.")
+  for it in items:
+    _validate_payout_item(it)
+
+  # 2) 바디 구성: v2는 다건 요청을 지원 — 바디는 'items' 배열 형태로 보냄
+  #    (응답이 payout-list 객체이고 entityBody.items에 목록이 오므로 요청도 items 배열로 구성)
+  body = {"items": items}
+
+  # 3) JWE 암호화
+  jwe_body = _encrypt_jwe(body)
+
+  # 4) 전송 (ENCRYPTION 헤더 + text/plain)
+  headers = {
+    "Authorization": _basic_auth(),
+    "Content-Type": "text/plain",
+    "TossPayments-api-security-mode": "ENCRYPTION",
+  }
+  r = requests.post(url, headers=headers, data=jwe_body)
+
+  # 5) 응답 처리 (성공/실패 모두 JWE일 수 있음)
+  ctype = r.headers.get("Content-Type", "")
+  if ctype.startswith("application/json"):
+    try:
+      return r.status_code, r.json()
+    except Exception:
+      return r.status_code, {"raw": r.text}
+  else:
+    try:
+      return r.status_code, _decrypt_jwe(r.text)
+    except Exception:
+      return r.status_code, {"raw": r.text, "decryptError": True}

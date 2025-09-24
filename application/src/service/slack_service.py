@@ -288,13 +288,11 @@ def _build_settlement_button_blocks(payload: Dict[str, Any]) -> list:
   btn_text = payload.get("button_text") or "정산 확정하기"
 
   value_json = json.dumps({
-    "settlement_id": payload.get("settlement_id"),
-    "destination": payload.get("destination"),
-    "schedule_type": payload.get("schedule_type", "EXPRESS"),
-    "payout_date": payload.get("payout_date"),
-    "amount_value": int(payload.get("amount_value", 0)),
-    "amount_currency": payload.get("amount_currency", "KRW"),
-    "transaction_description": payload.get("transaction_description", "정산")
+    "supply_id": payload.get("supply_id"),
+    "channel": payload.get("channel"),
+    "start": payload.get("start"),
+    "end": payload.get("end"),
+    "final_amount": int(payload.get("final_amount", 0))
   }, ensure_ascii=False)
 
   return [
@@ -447,13 +445,11 @@ def upload_file_with_button(
         # 3) 버튼 블록 구성
         btn_payload = {
           "button_text": "정산확정하기",
-          "settlement_id": f"SETTLE-{(start or '')}-{(end or '')}",
-          "destination": supply_id,
-          "schedule_type": "EXPRESS",
-          "payout_date": "",
-          "amount_value": int(summary.get("net_amount", 0)),
-          "amount_currency": "KRW",
-          "transaction_description": "정산"
+          "supply_id": supply_id,
+          "channel": channel,
+          "start": start,
+          "end": end,
+          "final_amount": summary.get('final_amount',0)
         }
         blocks = _build_settlement_button_blocks(btn_payload)
 
