@@ -7,7 +7,9 @@ from flask import current_app
 import requests
 
 from application.src.repositories.SupplierListRepository import SupplierListRepository
+from application.src.repositories.SupplierDetailRepository import SupplierDetailRepository
 from application.src.models.SupplierList import SupplierList
+from application.src.models.SupplierDetail import SupplierDetail
 
 from application.src.service import slack_service as SU
 from application.src.utils.text_utils import (
@@ -156,6 +158,7 @@ class Cafe24BoardsService:
       return (html_to_text(s) or "").strip()
 
     MAP_BIZ = {
+      "사업자 유형": "biz_company_type",
       "상호명": "biz_company_name",
       "대표자명": "biz_representative",
       "사업자번호": "biz_reg_no",
@@ -172,13 +175,15 @@ class Cafe24BoardsService:
       "주력 카테고리": "main_category",
       "주력 상품 URL": "main_product_url",
       "운영중인 홈페이지 및 쇼핑몰 URL": "homepage_url",
+      "공급사 로그인 아이디": "supplier_id",
       "공급사 택배 마감시간": "ship_cutoff",
     }
     # ★ 섹션3 현재 라벨을 의미에 맞게 강제 매핑
     MAP_SETTLE = {
-      "담당자명": "settle_bank",     # 예: 카카오뱅크
-      "직책": "settle_account",       # 예: 00000000000
-      "연락처": "tax_email",          # 예: gnswpwhrqkf3@gmail.com
+      "은행명": "settle_bank",
+      "예금주": "settle_name",
+      "계좌번호": "settle_account",
+      "연락처": "tax_email",
       "문의 사항": "inquiry",
     }
 
@@ -233,6 +238,7 @@ class Cafe24BoardsService:
     lines: List[str] = []
 
     biz = [
+      ("사업자 유형", parsed.get("biz_company_type")),
       ("상호명", parsed.get("biz_company_name")),
       ("대표자명", parsed.get("biz_representative")),
       ("사업자번호", parsed.get("biz_reg_no")),
@@ -254,6 +260,7 @@ class Cafe24BoardsService:
       ("주력 카테고리", parsed.get("main_category")),
       ("주력 상품 URL", parsed.get("main_product_url")),
       ("자사몰/쇼핑몰 URL", parsed.get("homepage_url")),
+      ("공급사 로그인 아이디", parsed.get("supplier_id")),
       ("택배 마감시간", parsed.get("ship_cutoff")),
     ]
     c = [f"{k}: {v.strip()}" for k, v in contact if (v or "").strip()]
@@ -263,8 +270,9 @@ class Cafe24BoardsService:
       lines.extend(c)
 
     settle = [
-      ("정산 은행명", parsed.get("settle_bank")),
-      ("정산 계좌번호", parsed.get("settle_account")),
+      ("은행명", parsed.get("settle_bank")),
+      ("예금주", parsed.get("settle_name")),
+      ("계좌번호", parsed.get("settle_account")),
       ("세금계산서 이메일", parsed.get("tax_email")),
       ("문의사항", parsed.get("inquiry")),
     ]
@@ -296,7 +304,7 @@ class Cafe24BoardsService:
       manager_rank = (parsed.get("mgr_title") or "").strip()
       phone = (parsed.get("mgr_phone") or parsed.get("biz_phone") or "").strip()
       email = (parsed.get("slack_email") or parsed.get("tax_email") or "").strip()
-      supplier_id = email.split("@")[0] if email else ""
+      supplier_id = parsed.get("supplier_id") or ""
 
       entity = SupplierList(
         companyName = safe_trunc(company, 100),
@@ -367,24 +375,24 @@ class Cafe24BoardsService:
           else:
             body_lines += ["저장 상태: 저장 실패(E)"]
           
-          # seller_body = {
-          #   "refSellerId": "seller_0001", # 유동적으로바뀌게
-          #   "businessType": "CORPORATE", # 유동적으로바뀌게
-          #   "company": {
-          #     "name": sanitize_company_name(parsed.get("biz_company_name")),
-          #     "representativeName": parsed.get("biz_representative"),
-          #     "businessRegistrationNumber": parsed.get("biz_reg_no"),
-          #     "email": safe_trunc(parsed.get("tax_email"), 255),
-          #     "phone": safe_trunc(parsed.get("biz_phone"), 50)
-          #   },
-          #   "account": {
-          #     "bankCode": "004",
-          #     "accountNumber": parsed.get("settle_account"),
-          #     "holderName": "와이디소프트웨어"
-          #   }
-          # }
-          # client = TossPayoutsClient()
-          # created = client.create_seller(seller_body)
+          detail = SupplierDetail(
+            supplierSeq=saved.seq,
+            businessType=self._normalize_business_type(parsed.get('biz_company_type')),
+
+            # company
+            companyName=sanitize_company_name(parsed.get("biz_company_name")),
+            representativeName=parsed.get("biz_representative"),
+            businessRegistrationNumber=parsed.get("biz_reg_no"),
+            companyEmail=parsed.get("slack_email"),
+            companyPhone=parsed.get("mgr_phone"),
+
+            # account
+            bankCode=self._normalize_bank_code(parsed.get('settle_bank')),
+            accountNumber=parsed.get("settle_account"),
+            holderName=parsed.get("settle_name"),
+          )
+          SupplierDetailRepository.save(detail)
+          print(f"[detail] upsert ok supplier_seq={saved.seq} detail_id={detail.id}")
         else:
           # 기타 게시판: 기본 정제
           base = html_to_text(raw_content)
@@ -428,3 +436,55 @@ class Cafe24BoardsService:
       except Exception:
         pass
       return False
+
+  def _normalize_business_type(self, src: Optional[str]) -> str:
+    MAP = {
+      "개인사업자": "INDIVIDUAL_BUSINESS",
+      "법인사업자": "CORPORATE",
+    }
+
+    if not src:
+      raise ValueError("사업자유형이 비어 있습니다.")
+
+    if src in MAP:
+      return MAP[src]
+
+    raise ValueError(f"지원하지 않는 사업자유형: {src}")
+  
+  def _normalize_bank_code(self, src: Optional[str]) -> str:
+    MAP = {
+      "경남은행": "039",
+      "광주은행": "034",
+      "단위농협(지역농축협)": "012",
+      "부산은행": "032",
+      "새마을금고": "045",
+      "산림조합": "064",
+      "신한은행": "088",
+      "신협": "048",
+      "씨티은행": "027",
+      "우리은행": "020",
+      "우체국예금보험": "071",
+      "저축은행중앙회": "050",
+      "전북은행": "037",
+      "제주은행": "035",
+      "카카오뱅크": "090",
+      "케이뱅크": "089",
+      "토스뱅크": "092",
+      "하나은행": "081",
+      "홍콩상하이은행": "054",
+      "IBK기업은행": "003",
+      "KB국민은행": "004",
+      "iM뱅크(대구)": "031",
+      "한국산업은행": "002",
+      "NH농협은행": "011",
+      "SC제일은행": "023",
+      "Sh수협은행": "007",
+    }
+
+    if not src:
+      raise ValueError("은행명이 비어 있습니다.")
+
+    if src in MAP:
+      return MAP[src]
+
+    raise ValueError(f"지원하지 않는 은행명: {src}")
