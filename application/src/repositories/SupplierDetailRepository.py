@@ -1,5 +1,6 @@
 # application/src/repositories/SupplierDetailRepository.py
 from typing import Optional, Dict, Any
+from sqlalchemy import select
 from application.src.models import db
 from application.src.models.SupplierDetail import SupplierDetail
 
@@ -15,10 +16,12 @@ class SupplierDetailRepository:
     return entity
   
   @staticmethod
-  def find_by_supplier_seq(supplier_seq: int) -> Optional[SupplierDetail]:
-    return db.session.query(SupplierDetail).filter(
-      SupplierDetail.supplierSeq == supplier_seq
-    ).first()
+  def findBySupplierSeq(supplier_seq: int) -> Optional[SupplierDetail]:
+    """
+    SupplierDetail 조회 (공급사 seq 기준)
+    """
+    stmt = select(SupplierDetail).where(SupplierDetail.supplierSeq == supplier_seq)
+    return db.session.execute(stmt).scalar_one_or_none()
 
   @staticmethod
   def upsert_from_seller_body(supplier_seq: int, seller_body: Dict[str, Any]) -> SupplierDetail:

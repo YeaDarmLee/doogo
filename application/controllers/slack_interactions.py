@@ -5,7 +5,6 @@ from slack_sdk.errors import SlackApiError
 from typing import Optional, List, Dict, Any  # 파일 상단에 추가
 
 from application.src.service.slack_service import ensure_client, _sleep_if_rate_limited
-from application.src.service.toss_service import TossPayoutsError
 
 slack_actions = Blueprint("slack_actions", __name__, url_prefix="/slack")
 
@@ -151,11 +150,6 @@ def _handle_payout_confirm(payload: dict, action: dict):
           "text": f":white_check_mark: *정산 확정 완료*\n• 참조ID: `{ref_id}`\n• 대상: `{dest}`\n• 금액: {amt_v:,} {amt_c}\n• 방식: {sched}"
         }
       }]
-    )
-  except TossPayoutsError as e:
-    _chat_update(
-      ch, ts,
-      text=f":x: 지급요청 실패\n```{str(e)[:500]}```"
     )
   except Exception as e:
     _chat_update(

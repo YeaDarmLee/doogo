@@ -83,6 +83,7 @@ _TEMPLATES_KO: Dict[str, str] = {
     "관리자 링크: https://eclogin.cafe24.com/Shop/?url=Init&login_mode=3\n"
     "아이디: `onedayboxb2b` / 공급사 ID: `{supplier_id}` / PW: `{supplier_pw}`\n"
     "첫 로그인 시 비밀번호 재설정 화면이 나오면 원하시는 비밀번호로 변경해 주세요. :smile:\n"
+    "*정상적인 정산을 위해 토스페이먼츠로 전달된 셀러 등록을 위한 본인인증을 완료해주세요!*\n"
     ":round_pushpin: 운영 공지/가이드는 <#C09DBG0UYCS>, <#C09EAJ46Z5J> 채널을 참고해 주세요."
   ),
 }

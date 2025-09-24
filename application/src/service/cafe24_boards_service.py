@@ -19,7 +19,6 @@ from application.src.utils.text_utils import (
 from application.src.utils.cafe24_utils import (
   BOARD_ROUTE, BOARD_NAME_MAP
 )
-from application.src.service.toss_service import TossPayoutsClient
 
 # OAuth 토큰 유틸
 from application.src.service.cafe24_oauth_service import get_access_token

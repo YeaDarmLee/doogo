@@ -2,13 +2,16 @@
 # -*- coding: utf-8 -*-
 from flask import Blueprint, render_template, request, jsonify
 from sqlalchemy.exc import SQLAlchemyError
-import os, requests, base64
+import os, requests, base64, json
+from typing import Any, Dict, Optional
 
 from application.src.models.SupplierList import SupplierList
 from application.src.repositories.SupplierListRepository import (
   SupplierListRepository,
   STATE_PENDING, STATE_APPROVED, STATE_REJECTED
 )
+from application.src.repositories.SupplierDetailRepository import SupplierDetailRepository
+from application.src.service.toss_service import create_seller_encrypted
 
 # Cafe24 OAuth 토큰 서비스 사용(※ 토큰은 여기서 동적으로 발급/갱신)
 from application.src.service.cafe24_oauth_service import get_access_token
@@ -997,6 +1000,35 @@ def cafe24_create_supplier():
       except Exception:
         bodyP2 = {"raw": respP2.text}
 
+      # Toss 등록 시도
+      try:
+        supplierDetail = SupplierDetailRepository.findBySupplierSeq(s.seq)
+        seller_body = {
+          "refSellerId": s.supplierCode,
+          "businessType": supplierDetail.businessType,
+          "company": {
+            "name": supplierDetail.companyName,
+            "representativeName": supplierDetail.representativeName,
+            "businessRegistrationNumber": supplierDetail.businessRegistrationNumber,
+            "email": supplierDetail.companyEmail,
+            "phone": supplierDetail.companyPhone,
+          },
+          "account": {
+            "bankCode": supplierDetail.bankCode,
+            "accountNumber": supplierDetail.accountNumber,
+            "holderName": supplierDetail.holderName,
+          },
+        }
+        status, body = create_seller_encrypted(seller_body)
+        print(status, json.dumps(body, ensure_ascii=False, indent=2))
+      except Exception as e:
+        print(e)
+        # 필요시 seller_body 최소 필드만 로그(개인정보 과다 로그 방지)
+        return jsonify({
+          "code": 50210,
+          "message": "토스 셀러 생성 실패",
+          "error": str(e),
+        }), 502
     except Exception as e:
       print(e)
 
@@ -1011,6 +1043,7 @@ def cafe24_create_supplier():
     })
 
   except requests.RequestException as e:
+    print(e)
     return jsonify({"code": 50012, "message": "Cafe24 호출 실패", "detail": str(e)}), 200
 
 def cafe24_upload_images(image_paths: list[str]) -> list[str]:
