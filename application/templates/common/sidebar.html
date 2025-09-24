@@ -42,6 +42,13 @@
     </a>
   </li>
   
+  <li class="nav-item {% if pageName == 'settlements' %}active{% endif %}">
+    <a class="nav-link" href="/settlements">
+      <i class="fas fa-fw fa-wallet"></i>
+      <span>정산 기록</span>
+    </a>
+  </li>
+  
   <li class="nav-item">
     <form action="{{ url_for('login.logout') }}" method="post" class="d-inline">
       <button type="submit" class="nav-link btn btn-link text-left">

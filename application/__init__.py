@@ -29,6 +29,7 @@ from application.controllers.main import main
 from application.controllers.login import login
 from application.controllers.supplier import supplier
 from application.controllers.payments import payments
+from application.controllers.settlements import settlements
 from application.controllers.eformsign_webhook import eformsign_webhook
 from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
 from application.controllers.slack_commands import slack_commands
@@ -40,6 +41,7 @@ app.register_blueprint(main)
 app.register_blueprint(login)
 app.register_blueprint(supplier)
 app.register_blueprint(payments)
+app.register_blueprint(settlements)
 
 app.register_blueprint(eformsign_webhook)
 app.register_blueprint(cafe24_webhooks_bp)

@@ -233,3 +233,34 @@ def list_sellers(
     return r.status_code, r.json()
   except Exception:
     return r.status_code, {"raw": r.text}
+  
+def list_settlements(start_date: str, end_date: str, limit: int = 1000, startingAfter: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
+  """
+  정산 내역 조회
+  - Endpoint: GET https://api.tosspayments.com/v1/settlements
+  - 보안: Basic Auth
+  - Query 파라미터:
+      startDate     (yyyy-MM-dd, 필수)
+      endDate       (yyyy-MM-dd, 필수)
+      limit         (int, 선택, 기본 100, 최대 5000)
+      startingAfter (str, 선택, 페이징 커서)
+  - 출력: (status, 응답 dict)
+  """
+  url = "https://api.tosspayments.com/v1/settlements"
+  headers = {
+    "Authorization": _basic_auth(),
+  }
+  params: Dict[str, Any] = {
+    "startDate": start_date,
+    "endDate": end_date,
+    "size": limit,
+  }
+  if startingAfter:
+    params["startingAfter"] = startingAfter
+
+  r = requests.get(url, headers=headers, params=params)
+
+  try:
+    return r.status_code, r.json()
+  except Exception:
+    return r.status_code, {"raw": r.text}
