@@ -10,12 +10,12 @@ def registerErrorHandlers(app, jwt):
   # 404 ERROR
   @app.errorhandler(404)
   def error404(error):
-    return render_template('common/404.html'), 404
+    return render_template('common/404.html')
     
   # 500 ERROR
   @app.errorhandler(500)
   def error500(error):
-    return render_template('common/500.html'), 500
+    return render_template('common/500.html')
 
   # JWT가 없거나 유효하지 않을 때
   @jwt.unauthorized_loader

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>500 - Internal Server Error</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link href="{{ url_for('static', filename='vendor/fontawesome-free/css/all.min.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/sb-admin-2.min.css') }}" rel="stylesheet">
+</head>
+<body class="bg-gradient-danger">
+
+  <div class="container text-center mt-5">
+    <div class="error mx-auto" data-text="500">500</div>
+    <p class="lead text-light mb-5">서버 오류가 발생했습니다</p>
+    <p class="text-light mb-0">문제가 지속되면 관리자에게 문의해 주세요.</p>
+    <a href="{{ url_for('main.index') }}" class="btn btn-sm btn-primary">&larr; 메인으로 돌아가기</a>
+  </div>
+
+  <script src="{{ url_for('static', filename='vendor/jquery/jquery.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+</body>
+</html>
