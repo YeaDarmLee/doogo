@@ -34,6 +34,15 @@
       <span>공급사 승인</span>
     </a>
   </li>
+  
+  <li class="nav-item">
+    <form action="{{ url_for('login.logout') }}" method="post" class="d-inline">
+      <button type="submit" class="nav-link btn btn-link text-left">
+        <i class="fas fa-sign-out-alt"></i>
+        <span>로그아웃</span>
+      </button>
+    </form>
+  </li>
 
   <!-- Divider -->
   <hr class="sidebar-divider d-none d-md-block">

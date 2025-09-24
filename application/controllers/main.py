@@ -1,11 +1,12 @@
 from flask import Blueprint, render_template, request, redirect, url_for
-from oauth2client.service_account import ServiceAccountCredentials
+from flask_jwt_extended import jwt_required
 import os, gspread
 
 main = Blueprint("main", __name__, url_prefix="/")
 
 # main 페이지 이동
 @main.route("/")
+@jwt_required()
 def index():
 #   return render_template(
 #     'index.html',

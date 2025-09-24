@@ -18,7 +18,7 @@ db.init_app(app)
 jwt = JWTManager(app)
 
 # 에러 핸들러 등록
-# registerErrorHandlers(app, jwt)
+registerErrorHandlers(app, jwt)
 
 # 백그라운드 스케줄러 가동
 from application.jobs.scheduler import start_scheduler

@@ -23,7 +23,70 @@
 </head>
 
 <body class="bg-gradient-primary">
-
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const USER_KEY = 'doogo.savedUserId';
+      const REMEMBER_KEY = 'doogo.rememberUserId';
+  
+      const $id = document.getElementById('userId');
+      const $remember = document.getElementById('customCheck');
+      const $form = document.querySelector('form.user');
+  
+      // 요소가 없으면 종료
+      if (!$id || !$remember || !$form) return;
+  
+      // 저장값 복원
+      try {
+        const remember = localStorage.getItem(REMEMBER_KEY) === '1';
+        const savedId = localStorage.getItem(USER_KEY) || '';
+  
+        if (remember && savedId) {
+          $id.value = savedId;
+          $remember.checked = true;
+        } else {
+          $remember.checked = false;
+        }
+      } catch (e) {
+        // localStorage 불가 시 무시
+      }
+  
+      // 체크박스 토글 시 동기화
+      $remember.addEventListener('change', () => {
+        try {
+          if ($remember.checked) {
+            localStorage.setItem(REMEMBER_KEY, '1');
+            localStorage.setItem(USER_KEY, $id.value || '');
+          } else {
+            localStorage.removeItem(REMEMBER_KEY);
+            localStorage.removeItem(USER_KEY);
+          }
+        } catch (e) {}
+      });
+  
+      // ID 입력 중 동기화 (Remember 켜진 경우만)
+      $id.addEventListener('input', () => {
+        try {
+          if ($remember.checked) {
+            localStorage.setItem(USER_KEY, $id.value || '');
+          }
+        } catch (e) {}
+      });
+  
+      // 폼 제출 시 최종 동기화
+      $form.addEventListener('submit', () => {
+        try {
+          if ($remember.checked) {
+            localStorage.setItem(REMEMBER_KEY, '1');
+            localStorage.setItem(USER_KEY, $id.value || '');
+          } else {
+            localStorage.removeItem(REMEMBER_KEY);
+            localStorage.removeItem(USER_KEY);
+          }
+        } catch (e) {}
+      });
+    });
+  </script>  
+  
   <div class="container">
 
     <!-- Outer Row -->
@@ -40,33 +103,26 @@
                   <div class="text-center">
                     <h1 class="h4 text-gray-900 mb-4">Doogo Admin</h1>
                   </div>
-                  <form class="user">
+                  <form class="user" method="post" action="/login">
+                    {% if error %}
+                      <div class="alert alert-danger small" role="alert">{{ error }}</div>
+                    {% endif %}
                     <div class="form-group">
-                      <input type="email" class="form-control form-control-user"
-                        id="exampleInputEmail" aria-describedby="emailHelp"
-                        placeholder="Email을 입력해 주세요">
+                      <input type="text" class="form-control form-control-user"
+                        id="userId" name="userId" placeholder="ID를 입력해 주세요" required>
                     </div>
                     <div class="form-group">
                       <input type="password" class="form-control form-control-user"
-                        id="exampleInputPassword" placeholder="비밀번호를 입력해 주세요">
+                        id="userPassword" name="userPassword" placeholder="비밀번호를 입력해 주세요" required>
                     </div>
                     <div class="form-group">
                       <div class="custom-control custom-checkbox small">
-                        <input type="checkbox" class="custom-control-input" id="customCheck">
+                        <input type="checkbox" class="custom-control-input" id="customCheck" name="rememberMe">
                         <label class="custom-control-label" for="customCheck">Remember Me</label>
                       </div>
-                    </div>
-                    <a href="/" class="btn btn-primary btn-user btn-block">
-                      Login
-                    </a>
+                    </div>                    
+                    <button type="submit" class="btn btn-primary btn-user btn-block">Login</button>
                   </form>
-                  <hr>
-                  <div class="text-center">
-                    <a class="small" href="forgot-password.html">Forgot Password?</a>
-                  </div>
-                  <div class="text-center">
-                    <a class="small" href="register.html">Create an Account!</a>
-                  </div>
                 </div>
               </div>
             </div>

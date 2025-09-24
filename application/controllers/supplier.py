@@ -1,6 +1,7 @@
 # application/src/service/supplier.py
 # -*- coding: utf-8 -*-
 from flask import Blueprint, render_template, request, jsonify
+from flask_jwt_extended import jwt_required
 from sqlalchemy.exc import SQLAlchemyError
 import os, requests, base64, json
 from typing import Any, Dict, Optional
@@ -37,6 +38,7 @@ def _cafe24_headers():
 # View: 공급사 관리 페이지
 # -----------------------------------
 @supplier.route("/", methods=["GET"])
+@jwt_required()
 def index():
   items = SupplierListRepository.findApproved()
 
@@ -63,6 +65,7 @@ def index():
 # Ajax: 등록
 # -----------------------------------
 @supplier.route("/ajax/addSupplier", methods=["POST"])
+@jwt_required()
 def addSupplier():
   try:
     data = request.get_json(silent=True) or request.form
@@ -170,6 +173,7 @@ def addSupplier():
 # Ajax: 단건 조회(수정 프리필)
 # -----------------------------------
 @supplier.route("/ajax/<int:seq>", methods=["GET"])
+@jwt_required()
 def getSupplier(seq: int):
   s = SupplierListRepository.findBySeq(seq)
   if not s:
@@ -197,6 +201,7 @@ def getSupplier(seq: int):
 # Ajax: 수정(낙관적 잠금)
 # -----------------------------------
 @supplier.route("/ajax/update", methods=["POST"])
+@jwt_required()
 def updateSupplier():
   try:
     data = request.get_json(silent=True) or request.form
@@ -262,6 +267,7 @@ def updateSupplier():
 # Ajax: 리스트(JSON) - 프런트가 POST 호출중
 # -----------------------------------
 @supplier.route("/ajax/getSupplierList", methods=["POST"])
+@jwt_required()
 def listSuppliers():
   items = SupplierListRepository.findAll()
 
@@ -288,6 +294,7 @@ def listSuppliers():
 # View: 공급사 승인 페이지
 # -----------------------------------
 @supplier.route("/approval", methods=["GET"])
+@jwt_required()
 def approval_view():
   # 초기 화면에는 '대기'만 내려줌
   pending = SupplierListRepository.find_pending(limit=100)
@@ -313,6 +320,7 @@ def approval_view():
 # body: { states?: ["P","A","R"], limit?: 50, offset?: 0 }
 # -----------------------------------
 @supplier.route("/ajax/approval/list", methods=["POST"])
+@jwt_required()
 def approval_list():
   data = request.get_json(silent=True) or {}
   states = data.get("states") or [STATE_PENDING]
@@ -340,6 +348,7 @@ def approval_list():
 # body: { seq: number, action: "approve"|"reject" }
 # -----------------------------------
 @supplier.route("/ajax/approval/set", methods=["POST"])
+@jwt_required()
 def approval_set():
   data = request.get_json(silent=True) or {}
   seq = int(data.get("seq") or 0)
@@ -358,6 +367,7 @@ def approval_set():
 # body: { seqs: number[], action: "approve"|"reject" }
 # -----------------------------------
 @supplier.route("/ajax/approval/bulkSet", methods=["POST"])
+@jwt_required()
 def approval_bulk_set():
   data = request.get_json(silent=True) or {}
   seqs = list({int(x) for x in (data.get("seqs") or []) if str(x).isdigit()})
@@ -376,6 +386,7 @@ def approval_bulk_set():
 # body: { seq: number }
 # -----------------------------------
 @supplier.route("/ajax/cafe24/createSupplier", methods=["POST"])
+@jwt_required()
 def cafe24_create_supplier():
   import re, decimal
   from decimal import Decimal
