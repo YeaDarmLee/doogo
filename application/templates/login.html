@@ -22,6 +22,14 @@
   <!-- Custom styles for this template-->
   <link href="{{ url_for('static', filename='css/sb-admin-2.min.css') }}" rel="stylesheet">
 
+  <style>
+    .login-left {
+      flex: 1;
+      background: url("{{ url_for('static', filename='img/login_img.jpg') }}") no-repeat center center;
+      background-size: cover;  /* 꽉 채우고 남는 부분 자름 */
+    }
+  </style>
+
 </head>
 
 <body class="bg-gradient-primary">
@@ -89,14 +97,16 @@
     });
   </script>  
   
-  <div class="container">
+  <div class="container" style="padding: 0; margin: 0; max-width: 100%; height: 100vh;">
 
     <!-- Outer Row -->
-    <div class="row justify-content-center">
+    <div class="row justify-content-center" style="margin: 0;height: 100%;">
+      <div class="col-6 login-left" style="padding: 0;">
+      </div>
 
-      <div class="col-xl-10 col-lg-12 col-md-9">
+      <div class="col-6" style="padding: 0; display: grid; place-items: center;">
 
-        <div class="card o-hidden border-0 shadow-lg my-5">
+        <div class="card o-hidden border-0 shadow-lg my-5" style="margin: 3rem!important; width: 100%; max-width: 700px;">
           <div class="card-body p-0">
             <!-- Nested Row within Card Body -->
             <div class="row">
