@@ -130,3 +130,106 @@ def create_payouts_encrypted(payouts: Union[Dict[str, Any], List[Dict[str, Any]]
       return r.status_code, _decrypt_jwe(r.text)
     except Exception:
       return r.status_code, {"raw": r.text, "decryptError": True}
+    
+def get_balance() -> Tuple[int, Dict[str, Any]]:
+  """
+  현재 상점의 정산 가능 잔액 조회
+  - Endpoint: GET https://api.tosspayments.com/v2/balances
+  - 보안: Basic Auth
+  - 출력: (status, 응답 dict)
+  """
+  url = "https://api.tosspayments.com/v2/balances"
+  headers = {
+    "Authorization": _basic_auth(),
+  }
+  r = requests.get(url, headers=headers)
+
+  try:
+    return r.status_code, r.json()
+  except Exception:
+    return r.status_code, {"raw": r.text}
+
+from typing import Optional
+
+def list_payouts(
+    limit: int = 10,
+    startingAfter: Optional[str] = None,
+    payoutDateGte: Optional[str] = None,
+    payoutDateLte: Optional[str] = None
+) -> Tuple[int, Dict[str, Any]]:
+  """
+  지급대행 요청 목록 조회
+  - Endpoint: GET https://api.tosspayments.com/v2/payouts
+  - 보안: Basic Auth
+  - Query 파라미터:
+      limit          (int, 기본 10, 최대 10000)
+      startingAfter  (str, 선택)
+      payoutDateGte  (str, yyyy-MM-dd, 선택)
+      payoutDateLte  (str, yyyy-MM-dd, 선택)
+  - 출력: (status, 응답 dict)
+  """
+  url = "https://api.tosspayments.com/v2/payouts"
+  headers = {
+    "Authorization": _basic_auth(),
+  }
+  params: Dict[str, Any] = {"limit": limit}
+  if startingAfter:
+    params["startingAfter"] = startingAfter
+  if payoutDateGte:
+    params["payoutDateGte"] = payoutDateGte
+  if payoutDateLte:
+    params["payoutDateLte"] = payoutDateLte
+
+  r = requests.get(url, headers=headers, params=params)
+
+  try:
+    return r.status_code, r.json()
+  except Exception:
+    return r.status_code, {"raw": r.text}
+  
+def get_seller(seller_id: str) -> Tuple[int, Dict[str, Any]]:
+  """
+  셀러 단건 조회
+  - Endpoint: GET https://api.tosspayments.com/v2/sellers/{id}
+  - 보안: Basic Auth
+  - 입력: seller_id (문자열, 예: "seller_a01k5x4nrmrterzprdmrbt0q8x9")
+  - 출력: (status, 응답 dict)
+  """
+  url = f"https://api.tosspayments.com/v2/sellers/{seller_id}"
+  headers = {
+    "Authorization": _basic_auth(),
+  }
+  r = requests.get(url, headers=headers)
+
+  try:
+    return r.status_code, r.json()
+  except Exception:
+    return r.status_code, {"raw": r.text}
+
+def list_sellers(
+    limit: int = 10,
+    startingAfter: Optional[str] = None
+) -> Tuple[int, Dict[str, Any]]:
+  """
+  셀러 목록 조회
+  - Endpoint: GET https://api.tosspayments.com/v2/sellers
+  - 보안: Basic Auth
+  - Query 파라미터:
+      limit         (int, 기본 10, 최대 100)
+      startingAfter (str, 선택, 이전 결과의 마지막 sellerId)
+  - 출력: (status, 응답 dict)
+  """
+  url = "https://api.tosspayments.com/v2/sellers"
+  headers = {
+    "Authorization": _basic_auth(),
+  }
+  params: Dict[str, Any] = {"limit": limit}
+  if startingAfter:
+    params["startingAfter"] = startingAfter
+
+  r = requests.get(url, headers=headers, params=params)
+
+  try:
+    return r.status_code, r.json()
+  except Exception:
+    return r.status_code, {"raw": r.text}

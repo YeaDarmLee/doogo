@@ -1,0 +1,366 @@
+<!-- header -->
+{% include './common/header.html' %}
+
+<style>
+  .card-body {
+    padding: 0.75rem;
+  }
+</style>
+
+<script>
+  $(function() {
+    // 시작일 달력
+    $("#startDate").datepicker({
+      dateFormat: "yy-mm-dd",
+      changeMonth: true,
+      changeYear: true,
+      onClose: function(selectedDate) {
+        // 시작일 선택 시 종료일 최소값 제한
+        $("#endDate").datepicker("option", "minDate", selectedDate);
+      }
+    });
+
+    // 종료일 달력
+    $("#endDate").datepicker({
+      dateFormat: "yy-mm-dd",
+      changeMonth: true,
+      changeYear: true,
+      onClose: function(selectedDate) {
+        // 종료일 선택 시 시작일 최대값 제한
+        $("#startDate").datepicker("option", "maxDate", selectedDate);
+      }
+    });
+
+    $("#payoutDate").datepicker({
+      dateFormat: "yy-mm-dd",    // yyyy-MM-dd 형식
+      changeMonth: true,         // 월 선택 가능
+      changeYear: true,          // 연도 선택 가능
+      showAnim: "slideDown",     // 열릴 때 애니메이션
+      minDate: 0
+    });
+
+    function toggleFields() {
+      const val = $("#scheduleType").val();
+      if (val === "SCHEDULED") {
+        $("#payoutDateGroup").show();
+        $("#infoGroup").hide();
+      } else if (val === "EXPRESS") {
+        $("#payoutDateGroup").hide();
+        $("#infoGroup").show();
+      }
+    }
+
+    // 초기 상태 설정
+    toggleFields();
+
+    // select 변경 시 처리
+    $("#scheduleType").on("change", toggleFields);
+
+    // 검색 버튼 동작: 쿼리스트링 만들어 이동
+    $("#btnSearch").on("click", function () {
+      const start = $("#startDate").val();
+      const end   = $("#endDate").val();
+      const qs = $.param({ startDate: start, endDate: end });
+      window.location.href = "/payments/?" + qs;
+    });
+
+    $("#refSellerId").on("input", handleRefSellerInput);
+
+    $("#btnAddPayment").on("click", function() {
+      const data = {
+        refSellerId: $("#refSellerId").val().trim(),
+        businessType: $("#businessType").val().trim(),
+        company_name: $("#company_name").val().trim(),
+        company_businessRegistrationNumber: $("#company_businessRegistrationNumber").val().trim(),
+        company_representativeName: $("#company_representativeName").val().trim(),
+        amount: $("#amount").val().trim(),
+        scheduleType: $("#scheduleType").val(),
+        payoutDate: $("#payoutDate").val().trim()
+      };
+  
+      // 필수값 검증 (간단 예시: 셀러 ID + 금액)
+      if (!data.refSellerId || !data.amount) {
+        Swal.fire("입력 오류", "셀러 ID와 금액은 필수입니다.", "error");
+        return;
+      }
+  
+      // SweetAlert 확인창
+      Swal.fire({
+        title: "지급 요청",
+        text: `셀러 [${data.refSellerId}]에게 ${data.amount}원을 지급요청 하시겠습니까?`,
+        icon: "question",
+        showCancelButton: true,
+        confirmButtonText: "지급요청",
+        cancelButtonText: "취소"
+      }).then((result) => {
+        if (result.isConfirmed) {
+          // Ajax 호출
+          $.ajax({
+            url: "/payments/ajax/add",
+            method: "POST",
+            contentType: "application/json",
+            data: JSON.stringify(data),
+            success: function(res) {
+              if (res.code === 20000) {
+                Swal.fire("완료", "지급 요청이 등록되었습니다.", "success").then(() => {
+                  $("#addPayment").modal("hide");
+                  location.reload(); // 새로고침 or 테이블 갱신
+                });
+              } else {
+                Swal.fire("오류", res.message || "지급 요청 실패", "error");
+              }
+            },
+            error: function(xhr) {
+              Swal.fire("에러", xhr.responseJSON?.message || "서버 오류", "error");
+            }
+          });
+        }
+      });
+    });
+  });
+
+  // 간단한 디바운스 유틸
+  function debounce(fn, delay) {
+    let t;
+    return function(...args) {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), delay);
+    };
+  }
+
+  // 입력 변화 감지 → 디바운스 → AJAX
+  const handleRefSellerInput = debounce(function() {
+    const q = $("#refSellerId").val().trim();
+    if (!q || q.length < 2) {
+      $("#sellerResult").text("");
+      return;
+    }
+    $("#sellerResult").text("조회 중...");
+
+    $.get("/payments/ajax/search-seller", { q }, function(res) {
+      if (res.code === 20000 && res.item) {
+        const s = res.item;
+    
+        // 값 채워넣기
+        $("#businessType").val(s.businessType || "");
+        $("#company_name").val(s.company?.name || "");
+        $("#company_businessRegistrationNumber").val(s.company?.businessRegistrationNumber || "");
+        $("#company_representativeName").val(s.company?.representativeName || "");
+    
+      } else {
+        // 값 초기화
+        $("#businessType, #company_name, #company_businessRegistrationNumber, #company_representativeName").val("");
+      }
+    }).fail(function(xhr) {
+      $("#sellerResult").text("오류: " + (xhr.responseJSON?.message || xhr.statusText));
+    });
+  }, 300);
+</script>
+
+<body id="page-top">
+  <div id="wrapper">
+    {% include './common/sidebar.html' %}
+
+    <div id="content-wrapper" class="d-flex flex-column">
+      <div id="content">
+        <div class="container-fluid">
+          <!-- Page Heading -->
+          <h1 class="h3 mb-2 text-gray-800">결제 관리</h1>
+          <p class="mb-4">공급사별 매출 내역과 정산 내역을 확인하고, 기간별 결제 현황을 조회할 수 있습니다.</p>
+
+          <div class="row">
+            <!-- Earnings (Monthly) Card Example -->
+            <div class="col-6">
+              <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        셀러에게 지급할 수 있는 잔액</div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(available)}}원</div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Earnings (Monthly) Card Example -->
+            <div class="col-6">
+              <div class="card border-left-success shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        셀러에게 지급할 수 없는 잔액</div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(pending)}}원</div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 리스트 카드 -->
+          <div class="card shadow mt-4">
+            <div class="card-header py-3 d-sm-flex align-items-center">
+              <h6 class="m-0 font-weight-bold text-primary">지급 요청 목록</h6>
+              
+              <input type="text" class="form-control form-control-user ml-2"
+                id="startDate" name="startDate"
+                value="{{ startDate }}" placeholder="시작일"
+                style="width: 120px;">
+              &nbsp;~&nbsp;
+              <input type="text" class="form-control form-control-user"
+                id="endDate" name="endDate"
+                value="{{ endDate }}" placeholder="종료일"
+                style="width: 120px;">
+
+                <a id="btnSearch" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm ml-2" href="javascript:#">검색</a>
+              <a class="d-sm-inline-block btn btn-sm btn-primary shadow-sm ml-2"
+                 href="javascript:#"
+                 data-toggle="modal" data-target="#addPayment">지급 요청서 작성</a>
+            </div>
+
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-bordered text-center" id="dataTable" width="100%" cellspacing="0">
+                  <thead>
+                    <tr>
+                      <th>No</th>
+                      <th>셀러ID</th>
+                      <th>구분</th>
+                      <th>상호명</th>
+                      <th>은행</th>
+                      <th>계좌번호</th>
+                      <th>예금주</th>
+                      <th>금액</th>
+                      <th>지급일자</th>
+                      <th>상태</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for i in items %}
+                      <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ i.refSellerId }}</td>
+                        <td>{{ i.businessType }}</td>
+                        <td>{{ i.companyName }}</td>
+                        <td>{{ i.bankCode }}</td>
+                        <td>{{ i.accountNumber }}</td>
+                        <td>{{ i.holderName }}</td>
+                        <td>{{ "{:,.0f}".format(i.amount) }}원</td>
+                        <td>{{ i.payoutDate }}</td>
+                        <td>{{ i.status }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              <!-- 서버에서 대기/반려만 내려주면 단순. 필요 시 필터 추가 가능 -->
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {% include './common/copyright.html' %}
+    </div>
+  </div>
+
+  <a class="scroll-to-top rounded" href="#page-top">
+    <i class="fas fa-angle-up"></i>
+  </a>
+
+  
+  <!-- 등록 모달 -->
+  <div class="modal fade" id="addPayment" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel"
+       aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+
+        <div class="modal-header">
+          <h5 class="modal-title" id="exampleModalLabel">지급 요청서 작성</h5>
+          <button class="close" type="button" data-dismiss="modal" aria-label="Close"><span>×</span></button>
+        </div>
+
+        <div class="modal-body">
+          <form class="supplierForm" id="supplierForm" novalidate>
+            
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="refSellerId" name="refSellerId"
+                     placeholder="셀러 ID" maxlength="20" required>
+              <div class="invalid-feedback">셀러 ID는 필수이며 최대 20자입니다.</div>
+            </div>
+            
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="businessType" name="businessType"
+                     placeholder="구분" readonly>
+            </div>
+
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="company_name" name="company_name"
+                     placeholder="상호명" readonly>
+            </div>
+
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="company_businessRegistrationNumber" name="company_businessRegistrationNumber"
+                     placeholder="사업자등록번호" readonly>
+            </div>
+
+            <div class="form-group">
+              <input type="text" class="form-control form-control-user"
+                     id="company_representativeName" name="company_representativeName"
+                     placeholder="대표자명" readonly>
+            </div>
+
+            <div class="form-group">
+              <input type="number" class="form-control form-control-user"
+                     id="amount" name="amount"
+                     placeholder="금액" maxlength="10">
+              <div class="invalid-feedback">숫자만 입력 가능합니다.</div>
+            </div>
+
+            <div class="form-group">
+              <select class="form-control form-control-user"
+                      id="scheduleType" name="scheduleType">
+                <option value="SCHEDULED">예약지급</option>
+                <option value="EXPRESS">바로지급</option>
+              </select>
+            </div>
+            
+            <div class="form-group" id="payoutDateGroup">
+              <input type="text" class="form-control form-control-user"
+                     id="payoutDate" name="payoutDate"
+                     placeholder="지급일 YYYY-MM-DD" maxlength="10">
+            </div>
+            
+            <div class="form-group" id="infoGroup">
+              <input type="text" class="form-control form-control-user"
+                     id="info" name="info"
+                     value="오전 8시 ~ 오후 3시에만 즉시 지급됩니다." readonly>
+            </div>
+
+          </form>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="addPaymentClose" type="button" data-dismiss="modal">취소</button>
+          <button class="btn btn-primary" id="btnAddPayment" type="button">등록</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  {% include './common/footer.html' %}
+</body>
