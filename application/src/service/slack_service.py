@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import os
 import time
-import logging
-from typing import Optional, Iterable, Union
+import logging, threading, traceback
+from typing import Optional, Iterable, Union, Dict, Any, Tuple
+from flask import current_app
 
 from slack_sdk import WebClient as _SlackClient
 from slack_sdk.errors import SlackApiError
+
+from application.src.service.settlement_service import make_settlement_excel, prev_month_range
 
 _logger = logging.getLogger("slack.utils")
 
@@ -93,6 +96,13 @@ def _sleep_if_rate_limited(e: SlackApiError) -> bool:
   except Exception:
     pass
   return False
+def _fmt_currency(value):
+  try:
+    if value in (None, "", "None"):
+      return "0원"
+    return f"{int(float(str(value).replace(',', '') )):,}원"
+  except Exception:
+    return f"{value}원"
 
 
 # =============================================================================
@@ -268,78 +278,212 @@ def rename_channel(channel: str, new_name: str) -> bool:
 # =============================================================================
 # 파일 업로드
 # =============================================================================
+
+def _build_settlement_button_blocks(payload: Dict[str, Any]) -> list:
+  """
+  '정산 확정하기' 버튼 블록.
+  - value에는 문자열만 가능하므로 compact JSON 문자열로 인코딩해서 담는다.
+  """
+  import json
+  btn_text = payload.get("button_text") or "정산 확정하기"
+
+  value_json = json.dumps({
+    "settlement_id": payload.get("settlement_id"),
+    "destination": payload.get("destination"),
+    "schedule_type": payload.get("schedule_type", "EXPRESS"),
+    "payout_date": payload.get("payout_date"),
+    "amount_value": int(payload.get("amount_value", 0)),
+    "amount_currency": payload.get("amount_currency", "KRW"),
+    "transaction_description": payload.get("transaction_description", "정산")
+  }, ensure_ascii=False)
+
+  return [
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "style": "primary",
+          "text": { "type": "plain_text", "text": btn_text },
+          "action_id": "payout_confirm",
+          "value": value_json
+        }
+      ]
+    }
+  ]
+
 def upload_file(
-  channels: Union[str, Iterable[str]],
-  filepath: Optional[str] = None,
-  content: Optional[bytes] = None,
-  *,
-  filename: Optional[str] = None,
-  title: Optional[str] = None,
-  initial_comment: Optional[str] = None
+  supply_id: Optional[str] = None,
+  channel: Optional[str] = None,
+  start: Optional[str] = None,
+  end: Optional[str] = None,
+) -> Tuple[str, Dict[str, Any]]:
+  """
+  단일 채널 파일 업로드(files.uploadV2).
+  """
+  fpath, summary = make_settlement_excel(start, end, supply_id=supply_id, out_dir="/tmp")
+  print(f"[slash:/settlement] excel_ready path={fpath} summary={summary} supply_code={supply_id}")
+  
+  def _bg(app):
+    with app.app_context():
+      try:
+        cli = ensure_client()
+        
+        initial_comment = (
+          f"*정산서 업로드 완료*\n기간: {start} ~ {end}\n"
+          f"배송완료 {summary['delivered_rows']}건 · 취소처리 {summary['canceled_rows']}건\n"
+          f"- *총 상품 결제 금액: {_fmt_currency(summary.get('gross_amount',0))}*\n"
+          f"- *배송비: {_fmt_currency(summary.get('shipping_amount',0))}*\n"
+          f"- *수수료: {_fmt_currency(summary.get('commission_amount',0))}*\n"
+          f"- *총 합계 금액: {_fmt_currency(summary.get('final_amount',0))}*"
+        )
+        cli.files_upload_v2(
+          channel=channel,  # 단수
+          file=fpath,
+          filename=os.path.basename(fpath),
+          title=f"{start:%Y-%m} 정산서",
+          initial_comment=initial_comment
+        )
+      except Exception as e:
+        traceback.print_exc()
+          
+  app_obj = current_app._get_current_object()
+  t = threading.Thread(target=_bg, args=(app_obj,), daemon=True)
+  t.start()
+  
+  return fpath, summary
+
+# slack_service.py 내 교체
+def upload_file_with_button(
+  supply_id: Optional[str] = None,
+  channel: Optional[str] = None,
+  start: Optional[str] = None,
+  end: Optional[str] = None,
 ) -> bool:
   """
-  파일 업로드(files.uploadV2). 단일 채널 기준으로 호출되므로 채널 수만큼 반복.
-  - filepath 또는 content 중 하나는 필수.
-  - content 사용 시 filename 지정 권장.
+  files.uploadV2 → (파일 메시지 등장 대기) → 버튼 메시지(스레드) 전송
+  - conversations.history를 폴링해 업로드된 파일이 포함된 메시지의 ts를 찾는다.
+  - 찾으면 thread_ts로 버튼 메시지를 달아 '파일 먼저 → 버튼' 순서를 보장.
   """
-  cli = ensure_client()
+  import os, time, traceback
+  from typing import Optional
+  from slack_sdk.errors import SlackApiError
 
-  # 채널 목록 정규화 및 '#name' → ID
-  if isinstance(channels, str):
-    channels = [channels]
-  resolved = []
-  for ch in channels:
-    if not ch:
-      continue
-    if ch.startswith("#"):
-      cid = resolve_channel_id_by_name(ch.lstrip("#"))
-      resolved.append(cid or ch.lstrip("#"))
-    else:
-      resolved.append(ch)
-  resolved = [c for c in resolved if c]
-
-  if not resolved:
-    _logger.error("[upload] no channels resolved")
-    return False
-  if not filepath and content is None:
-    _logger.error("[upload] no file content")
-    return False
-
-  for ch in resolved:
-    ok = False
-    for _ in range(2):
+  def _wait_file_message_ts(cli, channel_id: str, file_id: str, *, timeout_sec: int = 20, interval: float = 0.8) -> Optional[str]:
+    """
+    채널 히스토리에서 file_id를 포함한 메시지를 찾고 ts를 반환.
+    """
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
       try:
-        if filepath:
-          cli.files_upload_v2(
-            channel=ch,
-            file=filepath,
-            filename=filename or os.path.basename(filepath),
-            title=title,
-            initial_comment=initial_comment
-          )
-        else:
-          if not filename:
-            _logger.error("[upload] filename required for raw content")
-            return False
-          cli.files_upload_v2(
-            channel=ch,
-            content=content,
-            filename=filename,
-            title=title,
-            initial_comment=initial_comment
-          )
-        ok = True
-        break
-      except SlackApiError as e:
-        if _sleep_if_rate_limited(e):
-          continue
-        _logger.error(f"[upload.fail] ch={ch} err={getattr(e, 'response', {}).get('data', {})}")
-        return False
-    if not ok:
-      return False
+        hist = cli.conversations_history(channel=channel_id, limit=50)
+        for msg in hist.get("messages", []):
+          files = msg.get("files") or []
+          for f in files:
+            if f.get("id") == file_id:
+              return msg.get("ts")
+      except Exception:
+        pass
+      time.sleep(interval)
+    return None
 
+  def _ensure_channel_id(cli, ch: str) -> str:
+    # 이미 ID면 그대로, '#name'이나 'name'이면 lookup
+    if ch and ch.startswith(("C", "G")) and len(ch) >= 9:
+      return ch
+    name = ch.lstrip("#")
+    try:
+      resp = cli.conversations_list(limit=1000, types="public_channel,private_channel")
+      for c in resp.get("channels", []):
+        if c.get("name") == name:
+          return c.get("id")
+    except Exception:
+      pass
+    return ch  # 실패 시 원본 반환
+
+  def _bg(app):
+    with app.app_context():
+      try:
+        fpath, summary = make_settlement_excel(start, end, supply_id=supply_id, out_dir="/tmp")
+        cli = ensure_client()
+
+        channel_id = _ensure_channel_id(cli, channel or "")
+        initial_comment = (
+          f"*정산서 업로드 완료*\n기간: {start} ~ {end}\n"
+          f"배송완료 {summary.get('delivered_rows',0)}건 · 취소처리 {summary.get('canceled_rows',0)}건\n"
+          f"- *총 상품 결제 금액: {_fmt_currency(summary.get('gross_amount',0))}*\n"
+          f"- *배송비: {_fmt_currency(summary.get('shipping_amount',0))}*\n"
+          f"- *수수료: {_fmt_currency(summary.get('commission_amount',0))}*\n"
+          f"- *총 합계 금액: {_fmt_currency(summary.get('final_amount',0))}*"
+        )
+
+        # 1) 파일 업로드
+        up = cli.files_upload_v2(
+          channel=channel_id,
+          file=fpath,
+          filename=os.path.basename(fpath),
+          title=f"{start} ~ {end} 정산서",
+          initial_comment=initial_comment
+        )
+
+        # file_id 추출(v2 응답 포맷 가변 대응)
+        file_id = None
+        if isinstance(up, dict):
+          file_id = (up.get("file") or {}).get("id")
+          if not file_id:
+            files = up.get("files") or []
+            if files and isinstance(files, list):
+              file_id = files[0].get("id")
+
+        # 2) 채널 타임라인에 파일 메시지가 '실제로' 올라왔는지 확인 → ts 획득
+        thread_ts = None
+        if file_id:
+          thread_ts = _wait_file_message_ts(cli, channel_id, file_id, timeout_sec=20, interval=0.7)
+
+        # 2-보강) 그래도 못 찾으면 살짝 대기 후 진행(가시적 순서 보장용)
+        if not thread_ts:
+          time.sleep(4)
+
+        # 3) 버튼 블록 구성
+        btn_payload = {
+          "button_text": "정산확정하기",
+          "settlement_id": f"SETTLE-{(start or '')}-{(end or '')}",
+          "destination": supply_id,
+          "schedule_type": "EXPRESS",
+          "payout_date": "",
+          "amount_value": int(summary.get("net_amount", 0)),
+          "amount_currency": "KRW",
+          "transaction_description": "정산"
+        }
+        blocks = _build_settlement_button_blocks(btn_payload)
+
+        # 4) 파일 메시지 이후에 버튼 메시지 전송(가능하면 스레드로)
+        payload = {
+          "channel": channel_id,
+          "text": "정산 파일 업로드 완료",
+          "blocks": blocks
+        }
+        if thread_ts:
+          payload["thread_ts"] = thread_ts
+
+        # rate limit 대비 2회 재시도
+        for _ in range(2):
+          try:
+            cli.chat_postMessage(**payload)
+            break
+          except SlackApiError as e:
+            if _sleep_if_rate_limited(e):
+              continue
+            _logger.error(f"[button.msg.fail] ch={channel_id} err={getattr(e, 'response', {}).get('data', {})}")
+            break
+
+      except Exception:
+        traceback.print_exc()
+
+  app_obj = current_app._get_current_object()
+  t = threading.Thread(target=_bg, args=(app_obj,), daemon=True)
+  t.start()
   return True
-
 
 # =============================================================================
 # 사용자 조회/초대

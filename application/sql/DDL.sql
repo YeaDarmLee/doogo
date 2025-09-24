@@ -22,12 +22,12 @@ CREATE TABLE `SUPPLIER_LIST` (
 
 -- SupplierList 테이블 확장 예시 (DDL)
 ALTER TABLE SUPPLIER_LIST
-  ADD COLUMN contract_template VARCHAR(20) NULL COMMENT 'A(단일%)|B(구간%)',
-  ADD COLUMN contract_percent DECIMAL(5,2) NULL COMMENT 'A용: 단일 수수료(%)',
-  ADD COLUMN contract_threshold BIGINT NULL COMMENT 'B용: 특정 금액(원)',
-  ADD COLUMN contract_percent_over DECIMAL(5,2) NULL COMMENT 'B용: 초과 시 %',
-  ADD COLUMN contract_percent_under DECIMAL(5,2) NULL COMMENT 'B용: 이하 시 %',
-  ADD COLUMN contract_skip TINYINT(1) DEFAULT 0 COMMENT '외부에서 이미 체결(발송 스킵)';
+  ADD COLUMN CONTRACT_TEMPLATE VARCHAR(20) NULL COMMENT 'A(단일%)|B(구간%)',
+  ADD COLUMN CONTRACT_PERCENT DECIMAL(5,2) NULL COMMENT 'A용: 단일 수수료(%)',
+  ADD COLUMN CONTRACT_THRESHOLD BIGINT NULL COMMENT 'B용: 특정 금액(원)',
+  ADD COLUMN CONTRACT_PERCENT_UNDER DECIMAL(5,2) NULL COMMENT 'B용: 초과 시 %',
+  ADD COLUMN CONTRACT_PERCENT_OVER DECIMAL(5,2) NULL COMMENT 'B용: 이하 시 %',
+  ADD COLUMN CONTRACT_SKIP TINYINT(1) DEFAULT 0 COMMENT '외부에서 이미 체결(발송 스킵)';
 ALTER TABLE SUPPLIER_LIST
   ADD COLUMN SETTLEMENT_PERIOD VARCHAR(10) NULL COMMENT '정산주기(D/W/M)';
 
@@ -56,3 +56,85 @@ CREATE TABLE IF NOT EXISTS OAUTH_TOKEN (
   CREATED_AT    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (PROVIDER)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =========================================================
+-- 1) 정산 헤더 (효율형 MySQL)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS `SETTLEMENT` (
+  `ID`               BIGINT NOT NULL AUTO_INCREMENT,
+
+  -- 식별/연결
+  `SUPPLIER_SEQ`     INT NOT NULL,                            -- FK → SUPPLIER_LIST.SEQ
+  `SUPPLIER_CODE`    VARCHAR(50) NOT NULL,                    -- Cafe24 supplier_code
+
+  -- 기간/주기
+  `PERIOD_TYPE`      ENUM('M','W','D') NOT NULL,              -- 월/주/일
+  `PERIOD_START`     DATE NOT NULL,
+  `PERIOD_END`       DATE NOT NULL,
+  `MONTH`            CHAR(7) DEFAULT NULL,                    -- 'YYYY-MM' (필터 편의)
+
+  -- 금액 지표 (원 단위 정수 사용: BIGINT)
+  `GROSS_AMOUNT`     BIGINT NOT NULL DEFAULT 0,               -- 총 상품 결제 금액(취소 제외)
+  `SHIPPING_AMOUNT`  BIGINT NOT NULL DEFAULT 0,               -- 배송비 합계
+  `COMMISSION_RATE`  DECIMAL(5,2) NOT NULL DEFAULT 0.00,      -- 예: 15.00 => 15%
+  `COMMISSION_AMOUNT` BIGINT NOT NULL DEFAULT 0,              -- 수수료
+  `FINAL_AMOUNT`     BIGINT NOT NULL DEFAULT 0,               -- (GROSS - COMMISSION) + SHIPPING
+
+  -- 상태/전송/정산 흐름
+  `STATUS`           ENUM('READY','SENT','CONFIRMED','PAID','RECONCILED','CANCELED')
+                     NOT NULL DEFAULT 'READY',
+  `DEPOSIT_DUE_DT`   DATE DEFAULT NULL,                       -- 입금 예정일(스냅샷)
+  `SENT_AT`          DATETIME DEFAULT NULL,                   -- 슬랙 전송 시각
+  `SLACK_CHANNEL_ID` VARCHAR(30) DEFAULT NULL,                -- 채널 ID
+  `SLACK_FILE_TS`    VARCHAR(50) DEFAULT NULL,                -- 업로드 ts 등
+  `EXCEL_FILE_PATH`  VARCHAR(255) DEFAULT NULL,               -- 생성 파일 경로
+
+  `CREATED_AT`       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `UPDATED_AT`       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (`ID`),
+  UNIQUE KEY `uq_supplier_period` (`SUPPLIER_CODE`,`PERIOD_TYPE`,`PERIOD_START`,`PERIOD_END`),
+  KEY `IDX_SETTLEMENT_SUPPLIER` (`SUPPLIER_CODE`,`PERIOD_TYPE`,`PERIOD_START`,`PERIOD_END`),
+  KEY `IDX_SETTLEMENT_MONTH` (`MONTH`),
+
+  CONSTRAINT `fk_settlement_supplier`
+    FOREIGN KEY (`SUPPLIER_SEQ`) REFERENCES `SUPPLIER_LIST`(`SEQ`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- =========================================================
+-- 2) 정산 상세 (효율형 MySQL)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS `SETTLEMENT_DETAIL` (
+  `ID`                 BIGINT NOT NULL AUTO_INCREMENT,
+  `SETTLEMENT_ID`      BIGINT NOT NULL,                   -- FK → SETTLEMENT.ID
+
+  -- 그룹/식별
+  `SUPPLIER_CODE`      VARCHAR(50) NOT NULL,              -- 공급사코드
+  `ORDER_ID`           VARCHAR(100) DEFAULT NULL,         -- 주문 식별
+  `STATUS_LABEL`       ENUM('배송완료','취소처리') NOT NULL,
+
+  -- 엑셀 컬럼(핵심) - TEXT 최소화
+  `ORDER_DATE`         DATETIME DEFAULT NULL,             -- 주문일시
+  `STORE_NAME`         VARCHAR(100) DEFAULT NULL,         -- 쇼핑몰명
+  `BUYER_NAME`         VARCHAR(100) DEFAULT NULL,         -- 주문자명
+  `RECEIVER_NAME`      VARCHAR(100) DEFAULT NULL,         -- 수령인
+  `RECEIVER_ADDR_FULL` VARCHAR(255) DEFAULT NULL,         -- 주소(255로 제한; 더 길면 500로 상향)
+  `RECEIVER_PHONE`     VARCHAR(30) DEFAULT NULL,          -- 전화
+  `PRODUCT_NAME`       VARCHAR(200) DEFAULT NULL,         -- 상품명
+  `QTY`                INT NOT NULL DEFAULT 0,            -- 수량
+  `ITEM_AMOUNT`        BIGINT NOT NULL DEFAULT 0,         -- 상품구매금액(품목)
+  `CARRIER_NAME`       VARCHAR(80) DEFAULT NULL,          -- 배송업체
+  `TRACKING_NO`        VARCHAR(80) DEFAULT NULL,          -- 운송장번호
+  `ORDER_SHIPPING_FEE` BIGINT NOT NULL DEFAULT 0,         -- 배송비(주문단위 표시)
+
+  `CREATED_AT`         DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (`ID`),
+  KEY `IDX_DETAIL_SETTLEMENT` (`SETTLEMENT_ID`),
+  KEY `IDX_DETAIL_SUPPLIER` (`SUPPLIER_CODE`,`STATUS_LABEL`),
+  KEY `IDX_DETAIL_ORDER` (`ORDER_ID`),
+
+  CONSTRAINT `fk_detail_header`
+    FOREIGN KEY (`SETTLEMENT_ID`) REFERENCES `SETTLEMENT`(`ID`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

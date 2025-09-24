@@ -17,6 +17,7 @@ from application.src.utils.text_utils import (
 from application.src.utils.cafe24_utils import (
   BOARD_ROUTE, BOARD_NAME_MAP
 )
+from application.src.service.toss_service import TossPayoutsClient
 
 # OAuth 토큰 유틸
 from application.src.service.cafe24_oauth_service import get_access_token
@@ -365,7 +366,25 @@ class Cafe24BoardsService:
             body_lines += [f"저장 상태: 승인 대기({STATE_WAITING_REVIEW}) / seq={saved.seq}"]
           else:
             body_lines += ["저장 상태: 저장 실패(E)"]
-
+          
+          # seller_body = {
+          #   "refSellerId": "seller_0001", # 유동적으로바뀌게
+          #   "businessType": "CORPORATE", # 유동적으로바뀌게
+          #   "company": {
+          #     "name": sanitize_company_name(parsed.get("biz_company_name")),
+          #     "representativeName": parsed.get("biz_representative"),
+          #     "businessRegistrationNumber": parsed.get("biz_reg_no"),
+          #     "email": safe_trunc(parsed.get("tax_email"), 255),
+          #     "phone": safe_trunc(parsed.get("biz_phone"), 50)
+          #   },
+          #   "account": {
+          #     "bankCode": "004",
+          #     "accountNumber": parsed.get("settle_account"),
+          #     "holderName": "와이디소프트웨어"
+          #   }
+          # }
+          # client = TossPayoutsClient()
+          # created = client.create_seller(seller_body)
         else:
           # 기타 게시판: 기본 정제
           base = html_to_text(raw_content)

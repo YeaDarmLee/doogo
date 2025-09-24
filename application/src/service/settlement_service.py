@@ -23,9 +23,10 @@ from decimal import Decimal
 from application.src.service.cafe24_oauth_service import get_access_token
 from zoneinfo import ZoneInfo
 
+from application.src.repositories.SupplierListRepository import SupplierListRepository
+
 CAFE24_BASE_URL = os.getenv("CAFE24_BASE_URL", "").rstrip("/")
 SETTLEMENT_STORE_NAME = os.getenv("SETTLEMENT_STORE_NAME", "두고")
-SETTLEMENT_COMMISSION_RATE = float(os.getenv("SETTLEMENT_COMMISSION_RATE", "0.15"))  # 15%
 
 
 # -------------------- 유틸 --------------------
@@ -328,6 +329,8 @@ def make_settlement_excel(start: date, end: date, supply_id: Optional[str], *, o
   - 정산내역 시트 맨 아래에 요약 4줄(노란색) 추가
     총 상품 결제 금액 / 배송비 / 수수료 X% / 총 합계 금액
   """
+  supplier = SupplierListRepository.findBySupplierCode(supply_id)
+  
   orders = _list_orders(start, end, supply_id, canceled=None, order_status=None, date_type="order_date")
   rows, counts = build_settlement_rows(orders, supply_id=supply_id)
 
@@ -357,7 +360,17 @@ def make_settlement_excel(start: date, end: date, supply_id: Optional[str], *, o
       shipping_total += _toi(row.get("총 배송비(전체 품목에 표시)"))
 
   # ✅ 수수료 = items_total * rate
-  commission = int(round(items_total * SETTLEMENT_COMMISSION_RATE))
+  commission = 0
+  if supplier.contractTemplate == 'A':
+    commission = int(round(items_total * (supplier.contractPercent/100)))
+  elif supplier.contractTemplate == 'B':
+    if items_total > 10000000:
+      commission_under = int(round(10000000 * (supplier.contractPercentUnder/100)))
+      commission_over = int(round((items_total-10000000) * (supplier.contractPercentOver/100)))
+      commission = commission_under + commission_over
+    else:
+      commission = int(round(items_total * (supplier.contractPercentUnder/100)))
+
   # ✅ 총 합계 금액 = (items_total - commission) + shipping_total
   final_total = items_total - commission + shipping_total
 
@@ -392,7 +405,7 @@ def make_settlement_excel(start: date, end: date, supply_id: Optional[str], *, o
     summary_rows = [
       ("총 상품 결제 금액", items_total),
       ("배송비", shipping_total),
-      (f"수수료 {int(SETTLEMENT_COMMISSION_RATE*100)}%", commission),
+      ("수수료", commission),
       ("총 합계 금액", final_total),
     ]
 

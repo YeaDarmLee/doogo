@@ -389,7 +389,7 @@ def _after_slack_success(supplier: SupplierList):
       fields=fields,
     )
     
-    print(f"[{datetime.now()}] eformsign 문서 생성 성공 seq={supplier.seq} doc_id={doc["document_id"]}")
+    print(f"[{datetime.now()}] eformsign 문서 생성 성공 seq={supplier.seq} doc_id={doc['document_id']}")
 
     notify_contract_sent(
       recipient_email=recipient_email,

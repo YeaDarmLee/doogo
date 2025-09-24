@@ -31,6 +31,7 @@ from application.controllers.supplier import supplier
 from application.controllers.eformsign_webhook import eformsign_webhook
 from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
 from application.controllers.slack_commands import slack_commands
+from application.controllers.slack_interactions import slack_actions
 from application.controllers.cafe24_oauth_controller import cafe24_oauth_controller
 
 # 블루프린트 등록
@@ -41,6 +42,7 @@ app.register_blueprint(supplier)
 app.register_blueprint(eformsign_webhook)
 app.register_blueprint(cafe24_webhooks_bp)
 app.register_blueprint(slack_commands)
+app.register_blueprint(slack_actions)
 app.register_blueprint(cafe24_oauth_controller)
 
 # 상태 매핑 딕셔너리

@@ -5,11 +5,11 @@ from datetime import datetime
 import requests, threading, traceback, json, os
 from typing import Optional
 
-from slack_sdk import WebClient
-
 from application.src.service.slack_verify import verify_slack_request
 from application.src.service.slack_sales_service import fetch_sales_summary, first_day_of_month
-from application.src.service.settlement_service import make_settlement_excel, prev_month_range
+from application.src.service.slack_service import upload_file
+
+from application.src.service.settlement_service import prev_month_range
 
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 
@@ -203,6 +203,7 @@ def slash_settlement():
   supply_id = None
   if supplier:
     supply_id = getattr(supplier, "supplierCode", None)
+        
   print(f"[slash:/settlement] supplier={getattr(supplier,'companyName',None)} supply_id={supply_id}")
 
   # 기간: 기본=지난달, 텍스트 "YYYY-MM-DD~YYYY-MM-DD" 허용
@@ -230,45 +231,13 @@ def slash_settlement():
     "text": f"정산 파일을 생성 중입니다… ({start} ~ {end}) :hourglass_flowing_sand:"
   }
 
-  def _bg(app):
-    with app.app_context():
-      try:
-        fpath, summary = make_settlement_excel(start, end, supply_id=supply_id, out_dir="/tmp")
-        print(f"[slash:/settlement] excel_ready path={fpath} summary={summary}")
-
-        bot_token = os.getenv("SLACK_BOT_TOKEN")
-        cli = WebClient(token=bot_token)
-
-        # 비공개 채널 대비 선참여 시도 (이미 참여 상태면 무시)
-        try:
-          cli.conversations_join(channel=channel_id)
-        except Exception:
-          pass
-
-        initial_comment = (
-          f"*정산서 업로드 완료*\n기간: {start} ~ {end}\n"
-          f"배송완료 {summary['delivered_rows']}행 · 취소처리 {summary['canceled_rows']}행"
-        )
-        cli.files_upload_v2(
-          channel=channel_id,  # 단수
-          file=fpath,
-          filename=os.path.basename(fpath),
-          title=f"{start:%Y-%m} 정산서",
-          initial_comment=initial_comment
-        )
-      except Exception as e:
-        traceback.print_exc()
-        if response_url:
-          _post_to_response_url(response_url, {
-            "response_type": "ephemeral",
-            "replace_original": False,
-            "text": f":warning: 정산 파일 생성/업로드 중 오류가 발생했습니다.\n{e}"
-          })
-
   if response_url:
-    app_obj = current_app._get_current_object()
-    t = threading.Thread(target=_bg, args=(app_obj,), daemon=True)
-    t.start()
+    upload_file(
+      supply_id=supply_id,
+      channel=channel_id,
+      start=start,
+      end=end
+    )
   else:
     print("[slash:/settlement] response_url missing -> cannot update message asynchronously")
 
