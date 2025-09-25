@@ -15,21 +15,17 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from application.src.models import db
 from application.src.models.SupplierList import SupplierList
+from application.src.service.eformsign_service import after_slack_success
 
 # 오케스트레이션(채널 생성/알림)은 서비스 레이어 사용
 from application.src.service.slack_provision_service import (
   create_slack_channel,  # 기존 호출부 호환
   send_workspace_join_invite_email,
   notify_invite_mail_sent,
-  notify_user_invited_to_channel,
-  notify_contract_sent,
-  notify_contract_failed
+  notify_user_invited_to_channel
 )
 
-from application.src.utils import template as TEMPLATE
 from application.src.service import slack_service as SU
-
-SLACK_BROADCAST_CHANNEL_ID = os.getenv("SLACK_BROADCAST_CHANNEL_ID", "").strip()
 
 # stateCode semantics:
 #   None : 미처리
@@ -181,7 +177,7 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
 
         # 2-3) 계약서 전송
         if need_contract:
-          _after_slack_success(s)
+          after_slack_success(s)
 
         # 2-4) 마무리 상태 정리
         if s.stateCode == "P":
@@ -204,216 +200,3 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
     print("Unexpected error during job:", e)
   finally:
     _release_lock(lock_key)
-
-
-def _after_slack_success(supplier: SupplierList):
-  """
-  Slack 생성 이후 전자서명 발송:
-  - contractSkip=1 이면 스킵(S) 처리
-  - contractTemplate='A' → 단일 수수료(%)
-  - contractTemplate='B' → 임계금액 + 이하/초과 수수료(%)
-  - 이메일 없으면 오류(E)
-  - 토큰/발송 성공 시 대기(P) → 완료(A)
-  """
-  # 0) 전처리: eformsign 모듈 체크
-  try:
-    from application.src.service.eformsign_service import EformsignService, EformsignError
-  except Exception as e:
-    supplier.contractStatus = "E"
-    try:
-      db.session.commit()
-    except Exception:
-      db.session.rollback()
-    print(f"[{datetime.now()}] eformsign 모듈 임포트 실패 seq={supplier.seq} err={e}")
-    return
-
-  # 1) 스킵 플래그(외부 제출) → 발송 생략
-  if getattr(supplier, "contractSkip", False):
-    supplier.contractStatus = "S"  # Skipped(외부제출)
-    try:
-      db.session.commit()
-    except Exception:
-      db.session.rollback()
-    print(f"[{datetime.now()}] eformsign 전송 스킵(외부제출) seq={supplier.seq}")
-
-    # 알림: 스킵 통지
-    template_msg = TEMPLATE.render(
-      "skip_notice",
-      supplier_name=supplier.companyName,
-    )
-    SU.post_text(supplier.channelId, template_msg)
-    SU.post_text(SLACK_BROADCAST_CHANNEL_ID, template_msg)
-
-    template_msg = TEMPLATE.render(
-      "created_success_tip",
-      supplier_name=supplier.companyName,
-      supplier_id=supplier.supplierID,
-      supplier_pw=supplier.supplierPW,
-    )
-    SU.post_text(supplier.channelId, template_msg)
-    return
-
-  # 2) 수신 이메일 검사
-  recipient_email = (supplier.email or "").strip()
-  if not recipient_email:
-    supplier.contractStatus = "E"
-    try:
-      db.session.commit()
-    except Exception:
-      db.session.rollback()
-    print(f"[{datetime.now()}] eformsign 전송 스킵(이메일 없음) seq={supplier.seq}")
-    notify_contract_failed(
-      recipient_email or "-",
-      supplier_name=supplier.companyName,
-      reason="이메일 없음",
-      supplier_channel_id=supplier.channelId,
-    )
-    return
-
-  # 3) 계약 템플릿/필드 구성
-  t = (getattr(supplier, "contractTemplate", "") or "").upper()
-  fields = []
-  template_id = None
-
-  if t == "A":
-    pct = supplier.contractPercent
-    try:
-      ok = (pct is not None and 0 <= float(pct) <= 100)
-    except Exception:
-      ok = False
-    if not ok:
-      supplier.contractStatus = "E"
-      try:
-        db.session.commit()
-      except Exception:
-        db.session.rollback()
-      notify_contract_failed(
-        recipient_email=recipient_email,
-        supplier_name=supplier.companyName,
-        reason="계약서 A: 수수료(%) 값이 유효하지 않습니다.",
-        supplier_channel_id=supplier.channelId,
-      )
-      return
-
-    fields = [
-      {"id": "수수료", "value": f"수수료 {pct}% 를"}
-    ]
-    template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_A")
-
-  elif t == "B":
-    th = supplier.contractThreshold
-    pu = supplier.contractPercentUnder
-    po = supplier.contractPercentOver
-    ok = True
-    try:
-      ok = (th is not None and int(th) >= 0 and
-            pu is not None and 0 <= float(pu) <= 100 and
-            po is not None and 0 <= float(po) <= 100)
-    except Exception:
-      ok = False
-    if not ok:
-      supplier.contractStatus = "E"
-      try:
-        db.session.commit()
-      except Exception:
-        db.session.rollback()
-      notify_contract_failed(
-        recipient_email=recipient_email,
-        supplier_name=supplier.companyName,
-        reason="계약서 B: 임계금액/수수료(%) 값이 유효하지 않습니다.",
-        supplier_channel_id=supplier.channelId,
-      )
-      return
-
-    # 실제 템플릿 필드 키는 eformsign 설정에 맞게 조정 필요
-    # fields = [
-    #   {"name": "threshold", "value": str(int(th))},
-    #   {"name": "percent_under", "value": str(pu)},
-    #   {"name": "percent_over", "value": str(po)},
-    # ]
-    template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_B")
-
-  else:
-    supplier.contractStatus = "E"
-    try:
-      db.session.commit()
-    except Exception:
-      db.session.rollback()
-    notify_contract_failed(
-      recipient_email=recipient_email,
-      supplier_name=supplier.companyName,
-      reason="계약서 템플릿이 선택되지 않았습니다.",
-      supplier_channel_id=supplier.channelId,
-    )
-    return
-
-  if not template_id:
-    supplier.contractStatus = "E"
-    try:
-      db.session.commit()
-    except Exception:
-      db.session.rollback()
-    notify_contract_failed(
-      recipient_email=recipient_email,
-      supplier_name=supplier.companyName,
-      reason="EFORMSIGN 템플릿 ID가 설정되지 않았습니다.",
-      supplier_channel_id=supplier.channelId,
-    )
-    return
-
-  # 4) 전송대기(P) 저장
-  try:
-    supplier.contractStatus = "P"
-    db.session.commit()
-  except Exception:
-    db.session.rollback()
-    print(f"[{datetime.now()}] 계약 상태(P) 저장 실패 seq={supplier.seq}")
-
-  # 5) 토큰 발급 → 문서 생성/전송
-  try:
-    svc = EformsignService()
-    tr = svc.issue_access_token()
-    print(
-      f"[{datetime.now()}] eformsign 토큰 발급 성공 "
-      f"seq={supplier.seq} company={supplier.companyName} api_url={tr.api_url} expires_in={tr.expires_in}"
-    )
-
-    recipient_name = (supplier.companyName or "공급사 담당자").strip()
-
-    # 실제 템플릿에 맞춰 필드/옵션 구성 필요
-    doc = svc.create_document_from_template(
-      token=tr,
-      template_id=template_id,
-      recipient_email=recipient_email,
-      recipient_name=recipient_name,
-      fields=fields,
-    )
-    
-    print(f"[{datetime.now()}] eformsign 문서 생성 성공 seq={supplier.seq} doc_id={doc['document_id']}")
-
-    notify_contract_sent(
-      recipient_email=recipient_email,
-      supplier_name=supplier.companyName,
-      supplier_channel_id=supplier.channelId,
-    )
-
-    supplier.contractStatus = "A"
-    supplier.contractId = doc["document_id"]
-    try:
-      db.session.commit()
-    except Exception:
-      db.session.rollback()
-
-  except Exception as e:
-    supplier.contractStatus = "E"
-    try:
-      db.session.commit()
-    except Exception:
-      db.session.rollback()
-    notify_contract_failed(
-      recipient_email=recipient_email,
-      supplier_name=supplier.companyName,
-      reason=str(e),
-      supplier_channel_id=supplier.channelId,
-    )
-    print(f"[{datetime.now()}] eformsign 처리 실패 seq={supplier.seq} err={e}")

@@ -33,6 +33,17 @@
       .replaceAll("'", '&#39;');
   }
 
+  // 계약상태 셀 생성: E면 버튼, 아니면 상태 텍스트
+  function renderContractCell(s) {
+    if (s.contractStatus === 'E') {
+      return (
+        `<button class="btn btn-sm btn-warning ml-1 btn-resend" ` +
+        `data-seq="${s.seq}" title="계약서 재발송">계약서 재발송</button>`
+      );
+    }
+    return STATE_CONTRACT_CODE_MAP[s.contractStatus] || '';
+  }
+
   // FormData → 객체 (문자열은 trim)
   function formToObject(formEl) {
     const fd = new FormData(formEl);
@@ -209,17 +220,15 @@
       const dt = $(tableSel).DataTable();
       const rows = list.map(s => ([
         s.seq,
-        s.companyName,
-        s.supplierCode,
+        escapeHtml(s.companyName),
+        escapeHtml(s.supplierCode),
         STATE_CODE_MAP[s.stateCode] || '',
-        STATE_CONTRACT_CODE_MAP[s.contractStatus] || '',
-        s.supplierID,
-        s.supplierPW,
-        s.manager,
-        s.managerRank,
-        s.number,
-        s.email,
-        // ✅ 클릭 타겟 & 식별자 반드시 포함
+        renderContractCell(s),
+        escapeHtml(s.supplierID),
+        escapeHtml(s.manager),
+        escapeHtml(s.managerRank),
+        escapeHtml(s.number),
+        escapeHtml(s.email),
         `<a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit" data-seq="${s.seq}">수정</a>`
       ]));
       dt.clear();
@@ -229,20 +238,24 @@
       const tbody = document.querySelector('#dataTable tbody');
       let html = '';
       list.forEach(s => {
+        const contractCell = renderContractCell(s);
         html += `
           <tr data-seq="${s.seq}">
             <td>${s.seq}</td>
             <td>${escapeHtml(s.companyName)}</td>
             <td>${escapeHtml(s.supplierCode)}</td>
             <td>${escapeHtml(STATE_CODE_MAP[s.stateCode] || '')}</td>
-            <td>${escapeHtml(STATE_CONTRACT_CODE_MAP[s.contractStatus] || '')}</td>
+            <td>${contractCell}</td>
             <td>${escapeHtml(s.supplierID)}</td>
-            <td>${escapeHtml(s.supplierPW)}</td>
             <td>${escapeHtml(s.manager)}</td>
             <td>${escapeHtml(s.managerRank)}</td>
             <td>${escapeHtml(s.number)}</td>
             <td>${escapeHtml(s.email)}</td>
-            <td><a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit" data-seq="${s.seq}">수정</a></td>
+            <td>
+              <a href="#"
+                class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit"
+                data-seq="${s.seq}">수정</a>
+            </td>
           </tr>`;
       });
       tbody.innerHTML = html;
@@ -547,6 +560,42 @@
     $('#contractBFields').toggleClass('d-none', t !== 'B');
   }
   $(document).on('change', '#contractTemplate', toggleContractFields);
+
+  $(document).on('click', '.btn-resend', function (e) {
+    e.preventDefault();
+    const seq = $(this).data('seq');
+    if (!seq) return;
+
+    Swal.fire({
+      icon: 'warning',
+      title: '계약서 재발송',
+      text: '해당 공급사에 계약서를 다시 발송할까요?',
+      showCancelButton: true,
+      confirmButtonText: '재발송',
+      cancelButtonText: '취소',
+      reverseButtons: true
+    }).then((res) => {
+      if (!res.isConfirmed) return;
+
+      $.ajax({
+        url: '/supplier/ajax/contract/resend',
+        method: 'POST',
+        contentType: 'application/json',
+        dataType: 'json',
+        data: JSON.stringify({ seq }),
+      }).done((r) => {
+        if (r.code === 20000) {
+          alertStart('success', '재발송 요청 완료', '계약서 재발송이 요청되었습니다.');
+          // 최신 상태 반영
+          reloadSupplierTable();
+        } else {
+          alertStart('error', '재발송 실패', r.message || '계약서 재발송 처리에 실패했습니다.');
+        }
+      }).fail(() => {
+        alertStart('error', '재발송 실패', '계약서 재발송 처리에 실패했습니다.');
+      });
+    });
+  });
 </script>
 
 <body id="page-top">
@@ -592,7 +641,6 @@
                       <th>Slack</th>
                       <th>계약서 작성여부</th>
                       <th>공급사 ID</th>
-                      <th>공급사 PW</th>
                       <th>담당자명</th>
                       <th>직책</th>
                       <th>연락처</th>
@@ -607,9 +655,20 @@
                         <td>{{ supplier.companyName }}</td>
                         <td>{{ supplier.supplierCode }}</td>
                         <td>{{ supplier.stateCode | state_text }}</td>
-                        <td>{{ supplier.contractStatus | contractState_text }}</td>
+                        <td>
+                          {% if supplier.contractStatus != 'E' %}
+                            {{ supplier.contractStatus | contractState_text }}
+                          {% endif %}
+                          {% if supplier.contractStatus == 'E' %}
+                            <button
+                              class="btn btn-sm btn-warning ml-1 btn-resend"
+                              data-seq="{{ supplier.seq }}"
+                              title="계약서 재발송">
+                              계약서 재발송
+                            </button>
+                          {% endif %}
+                        </td>
                         <td>{{ supplier.supplierID }}</td>
-                        <td>{{ supplier.supplierPW }}</td>
                         <td>{{ supplier.manager }}</td>
                         <td>{{ supplier.managerRank }}</td>
                         <td>{{ supplier.number }}</td>

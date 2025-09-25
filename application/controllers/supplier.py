@@ -13,6 +13,7 @@ from application.src.repositories.SupplierListRepository import (
 )
 from application.src.repositories.SupplierDetailRepository import SupplierDetailRepository
 from application.src.service.toss_service import create_seller_encrypted
+from application.src.service.eformsign_service import after_slack_success
 
 # Cafe24 OAuth 토큰 서비스 사용(※ 토큰은 여기서 동적으로 발급/갱신)
 from application.src.service.cafe24_oauth_service import get_access_token
@@ -1090,3 +1091,29 @@ def build_description_html(img_urls: list[str]) -> str:
       '</figure>'
     )
   return "\n".join(parts)
+
+@supplier.route("/ajax/contract/resend", methods=["POST"])
+@jwt_required()
+def resend_contract():
+  try:
+    data = request.get_json(silent=True) or {}
+    seq = int((data.get("seq") or 0))
+    if not seq:
+      return jsonify({"code": 40001, "message": "seq가 필요합니다."}), 400
+
+    s = SupplierListRepository.findBySeq(seq)
+    if not s:
+      return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
+
+    # E 상태만 재발송 가능
+    if (getattr(s, "contractStatus", "") or "") != "E":
+      return jsonify({"code": 40002, "message": "재발송은 에러(E) 상태에서만 가능합니다."}), 400
+
+    # 재시도 큐 상태로 되돌림 (배치가 잡아가도록)
+    after_slack_success(s)
+
+    # 필요시 여기서 바로 동기 재발송 호출 로직을 넣을 수도 있음.
+    return jsonify({"code": 20000, "seq": s.seq})
+  except Exception as e:
+    # (참고) Repository에 rollback_if_needed가 없어서 save 실패시의 롤백은 SQLAlchemy 세션 정책에 따름
+    return jsonify({"code": 50000, "message": "예외 발생", "detail": str(e)}), 500
