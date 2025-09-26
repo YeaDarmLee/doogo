@@ -57,6 +57,73 @@
             지정한 날짜 정보로 결제 기록을 조회합니다.<br>
             결제 기록은 결제가 일어난 다음 날부터 조회됩니다. 
           </p>
+
+          <div class="row">
+
+            <!-- 결제금액 합계 -->
+            <div class="col-4">
+              <div class="card border-left-success shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        결제금액 합계
+                      </div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">
+                        {{ "{:,.0f}".format(totals.amount) }}원
+                      </div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 수수료 합계 -->
+            <div class="col-4">
+              <div class="card border-left-warning shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        수수료 합계
+                      </div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">
+                        {{ "{:,.0f}".format(totals.fee) }}원
+                      </div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 지급액 합계 -->
+            <div class="col-4">
+              <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        지급액 합계
+                      </div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">
+                        {{ "{:,.0f}".format(totals.payout) }}원
+                      </div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
           
           <!-- 리스트 카드 -->
           <div class="card shadow mt-4">
@@ -82,11 +149,14 @@
                   <thead>
                     <tr>
                       <th>No</th>
+                      <th>MID</th>
                       <th>주문ID</th>
                       <th>결제수단</th>
                       <th>승인일시</th>
-                      <th>금액</th>
+                      <th>결제금액</th>
                       <th>수수료</th>
+                      <th>지급액</th>
+                      <th>정산매출일</th>
                       <th>정산예정일</th>
                       <th>상태</th>
                     </tr>
@@ -94,45 +164,76 @@
                   <tbody>
                     {% if items and items|length > 0 %}
                       {% for i in items %}
+                        {% set payout = (i.payOutAmount 
+                                          if i.payOutAmount is not none 
+                                          else (i.amount - i.fee 
+                                                if i.amount is not none and i.fee is not none 
+                                                else none)) %}
+                        {% set status_val = i.settlementStatus 
+                                            or (i.transfer.settlementStatus if i.transfer else none)
+                                            or (i.mobilePhone.settlementStatus if i.mobilePhone else none)
+                                            or (i.virtualAccount.settlementStatus if i.virtualAccount else none) %}
+                        {% if i.cancel %}
+                          {% set status_val = i.cancel.cancelStatus or status_val %}
+                        {% endif %}
+                
                         <tr>
                           <td>{{ loop.index }}</td>
-                          <td>{{ i.orderId }}</td>
-                          <td>{{ i.method }}</td>
-                          <td>{{ i.approvedAt }}</td>
-                  
+                          <td>{{ i.mId or '-' }}</td>
+                          <td>{{ i.orderId or '-' }}</td>
+                
+                          <td>{{ i.method or '-' }}</td>
+                          <td>{{ i.approvedAt or '-' }}</td>
+                
+                          <!-- 결제금액 -->
                           <td>
-                            {% if i.amount > 0 %}
+                            {% if i.amount is number and i.amount > 0 %}
                               <div class="btn-sm btn-info no-hover">{{ "{:,.0f}".format(i.amount) }}원</div>
-                            {% elif i.amount < 0 %}
+                            {% elif i.amount is number and i.amount < 0 %}
                               <div class="btn-sm btn-danger no-hover">{{ "{:,.0f}".format(i.amount) }}원</div>
-                            {% else %}
+                            {% elif i.amount is number %}
                               <div class="btn-sm btn-secondary no-hover">0원</div>
-                            {% endif %}
+                            {% else %}-{% endif %}
                           </td>
-                  
+                
+                          <!-- 수수료 -->
                           <td>
-                            {% if i.fee > 0 %}
+                            {% if i.fee is number and i.fee > 0 %}
                               <div class="btn-sm btn-info no-hover">{{ "{:,.0f}".format(i.fee) }}원</div>
-                            {% elif i.fee < 0 %}
+                            {% elif i.fee is number and i.fee < 0 %}
                               <div class="btn-sm btn-danger no-hover">{{ "{:,.0f}".format(i.fee) }}원</div>
-                            {% else %}
+                            {% elif i.fee is number %}
                               <div class="btn-sm btn-secondary no-hover">0원</div>
-                            {% endif %}
+                            {% else %}-{% endif %}
                           </td>
-                  
-                          <td>{{ i.paidOutDate }}</td>
-                          <td>{{ i.transfer.settlementStatus if i.transfer else (i.cancel.cancelStatus if i.cancel else "정상") }}</td>
+                
+                          <!-- 지급액: payOutAmount 없으면 amount - fee 로 계산 -->
+                          <td>
+                            {% if payout is number and payout > 0 %}
+                              <div class="btn-sm btn-info no-hover">{{ "{:,.0f}".format(payout) }}원</div>
+                            {% elif payout is number and payout < 0 %}
+                              <div class="btn-sm btn-danger no-hover">{{ "{:,.0f}".format(payout) }}원</div>
+                            {% elif payout is number %}
+                              <div class="btn-sm btn-secondary no-hover">0원</div>
+                            {% else %}-{% endif %}
+                          </td>
+                
+                          <td>{{ i.soldDate or '-' }}</td>
+                          <td>{{ i.paidOutDate or '-' }}</td>
+                
+                          <!-- 상태: 취소가 있으면 cancelStatus 우선, 없으면 settlementStatus 계열 -->
+                          <td>{{ status_val or "정상" }}</td>
                         </tr>
                       {% endfor %}
                     {% else %}
                       <tr>
-                        <td colspan="8" class="text-muted py-4">
+                        <td colspan="12" class="text-muted py-4">
                           <i class="fas fa-info-circle"></i> 정산 내역이 없습니다.
                         </td>
                       </tr>
                     {% endif %}
                   </tbody>
-                </table>
+                </table>                
               </div>
               <!-- 서버에서 대기/반려만 내려주면 단순. 필요 시 필터 추가 가능 -->
             </div>

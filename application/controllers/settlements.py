@@ -30,16 +30,43 @@ def index():
   except Exception:
     end_date = default_end
 
-  # 보정: 시작 > 종료면 서로 스왑
   if start_date > end_date:
     start_date, end_date = end_date, start_date
   
   status, resp = list_settlements(start_date, end_date)
 
+  # 🔹 합계 계산
+  def _num(v):
+    try:
+      return float(v)
+    except Exception:
+      return 0.0
+
+  total_amount = 0.0
+  total_fee = 0.0
+  total_payout = 0.0
+
+  for i in (resp or []):
+    amount = _num(i.get("amount"))
+    fee = _num(i.get("fee"))
+    payout = i.get("payOutAmount")
+    payout = _num(payout) if payout is not None else amount - fee
+
+    total_amount += amount
+    total_fee += fee
+    total_payout += payout
+
+  totals = {
+    "amount": total_amount,
+    "fee": total_fee,
+    "payout": total_payout,
+  }
+
   return render_template(
     "settlements.html",
     pageName="settlements",
     items=resp,
+    totals=totals,  # ⬅️ 합계 전달
     startDate=start_date.strftime("%Y-%m-%d"),
     endDate=end_date.strftime("%Y-%m-%d"),
   )
