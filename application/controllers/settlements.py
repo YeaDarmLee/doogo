@@ -13,15 +13,10 @@ def _parse_ymd(s: str) -> dt.date:
 @settlements.route("/")
 @jwt_required()
 def index():
-  # 1) 잔액 조회
-  status, resp = get_balance()
-  available = resp.get("entityBody", {}).get("availableAmount", {}).get("value", 0)
-  pending   = resp.get("entityBody", {}).get("pendingAmount", {}).get("value", 0)
-
   # 2) 기간 기본값: 오늘 ~ 6일 전
   today = dt.date.today()
   default_start = today - dt.timedelta(days=6)
-  default_end = today
+  default_end = today + dt.timedelta(days=6)
 
   # 3) 쿼리 파라미터 받기 (없으면 기본값)
   q_start = request.args.get("startDate")
@@ -44,8 +39,6 @@ def index():
   return render_template(
     "settlements.html",
     pageName="settlements",
-    available=available,
-    pending=pending,
     items=resp,
     startDate=start_date.strftime("%Y-%m-%d"),
     endDate=end_date.strftime("%Y-%m-%d"),

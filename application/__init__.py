@@ -65,12 +65,51 @@ STATE_CONTRACT_CODE_MAP = {
   "S": "외부계약",
   "E": "에러"
 }
+STATE_CONTRACT_CODE_MAP = {
+  "": "슬랙대기",
+  "P": "발송대기",
+  "A": "발송완료",
+  "SS": "계약완료",
+  "S": "외부계약",
+  "E": "에러"
+}
+BANK_CODE_MAP = {
+  "039": "경남은행",
+  "034": "광주은행",
+  "012": "단위농협(지역농축협)",
+  "032": "부산은행",
+  "045": "새마을금고",
+  "064": "산림조합",
+  "088": "신한은행",
+  "048": "신협",
+  "027": "씨티은행",
+  "020": "우리은행",
+  "071": "우체국예금보험",
+  "050": "저축은행중앙회",
+  "037": "전북은행",
+  "035": "제주은행",
+  "090": "카카오뱅크",
+  "089": "케이뱅크",
+  "092": "토스뱅크",
+  "081": "하나은행",
+  "054": "홍콩상하이은행",
+  "003": "IBK기업은행",
+  "004": "KB국민은행",
+  "031": "iM뱅크(대구)",
+  "002": "한국산업은행",
+  "011": "NH농협은행",
+  "023": "SC제일은행",
+  "007": "Sh수협은행",
+}
 
 def state_text(code):
   return STATE_CODE_MAP.get(code, "")
 def contractState_text(code):
   return STATE_CONTRACT_CODE_MAP.get(code, "")
+def bankState_text(code):
+  return BANK_CODE_MAP.get(code, "")
 
 # Jinja 필터 등록
 app.jinja_env.filters["state_text"] = state_text
 app.jinja_env.filters["contractState_text"] = contractState_text
+app.jinja_env.filters["bankState_text"] = bankState_text

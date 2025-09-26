@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import os, hmac, hashlib, time, json
-import datetime, time
+import datetime, time, uuid
 from flask import Blueprint, request, current_app
 from slack_sdk.errors import SlackApiError
 from typing import Optional, List, Dict, Any  # 파일 상단에 추가
@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any  # 파일 상단에 추가
 from application.src.service.slack_service import ensure_client, _sleep_if_rate_limited
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 
-from application.src.service.toss_service import create_payouts_encrypted
+from application.src.service.toss_service import list_sellers, create_payouts_encrypted
 
 slack_actions = Blueprint("slack_actions", __name__, url_prefix="/slack")
 
@@ -122,18 +122,33 @@ def _handle_payout_confirm(payload: dict, action: dict):
       "text": { "type": "mrkdwn", "text": "⏳ *정산 확정을 처리 중입니다...*" }
     }]
   )
+  
+  status, resp2 = list_sellers(limit=1000)
+  seller_items = resp2.get("entityBody", {}).get("items", [])
+  
+  # 매칭 찾기
+  match_seller = next(
+    (item for item in seller_items if item.get("refSellerId") == s.supplierCode),
+    None
+  )
+  
+  # 고유 refPayoutId 생성 (중복 방지)
+  ref_base = (s.supplierCode or "").strip()
+  stamp    = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+  suffix   = uuid.uuid4().hex[:6]
+  ref_payout_id = f"{ref_base}-{stamp}-{suffix}"
 
   # 지급요청 바디 구성
   item = {
-    "refPayoutId": f"PO-{s.supplierCode}-{int(time.time())}",
-    "destination": s.supplierCode,
+    "refPayoutId": ref_payout_id,
+    "destination": match_seller["id"],
     "scheduleType": "SCHEDULED",
     "payoutDate": payout_date,
     "amount": {
       "currency": "KRW",
       "value": final_amount
     },
-    "transactionDescription": "정산",
+    "transactionDescription": "정기정산",
     "metadata": {
       "period": f"{start}-{end}"
     }
@@ -142,7 +157,7 @@ def _handle_payout_confirm(payload: dict, action: dict):
   # 요청 실행
   try:
     status, resp = create_payouts_encrypted(item)
-    print(status, json.dumps(resp, ensure_ascii=False, indent=2))
+    print(status, resp)
     
     # 성공 메시지
     _chat_update(

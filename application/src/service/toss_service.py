@@ -103,12 +103,8 @@ def create_payouts_encrypted(payouts: Union[Dict[str, Any], List[Dict[str, Any]]
   for it in items:
     _validate_payout_item(it)
 
-  # 2) 바디 구성: v2는 다건 요청을 지원 — 바디는 'items' 배열 형태로 보냄
-  #    (응답이 payout-list 객체이고 entityBody.items에 목록이 오므로 요청도 items 배열로 구성)
-  body = {"items": items}
-
   # 3) JWE 암호화
-  jwe_body = _encrypt_jwe(body)
+  jwe_body = _encrypt_jwe(items)
 
   # 4) 전송 (ENCRYPTION 헤더 + text/plain)
   headers = {
@@ -260,6 +256,23 @@ def list_settlements(start_date: str, end_date: str, limit: int = 1000, starting
 
   r = requests.get(url, headers=headers, params=params)
 
+  try:
+    return r.status_code, r.json()
+  except Exception:
+    return r.status_code, {"raw": r.text}
+
+def cancel_payout(payout_id: str):
+  """
+  지급대행 요청 취소 (예약(SCHEDULED)만 가능, 지급일 이전에만 가능)
+  - Endpoint: POST /v1/payouts/sub-malls/settlements/{payoutKey}/cancel
+  - 보안: Basic Auth (ENCRYPTION 아님)
+  """
+  url = f"https://api.tosspayments.com/v1/payouts/sub-malls/settlements/{payout_id}/cancel"
+  headers = {
+    "Authorization": _basic_auth(),
+    "Content-Type": "application/json",
+  }
+  r = requests.post(url, headers=headers)  # 바디 없음
   try:
     return r.status_code, r.json()
   except Exception:

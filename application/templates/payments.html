@@ -5,6 +5,9 @@
   .card-body {
     padding: 0.75rem;
   }
+  .no-hover {
+    pointer-events: none;
+  }
 </style>
 
 <script>
@@ -68,6 +71,7 @@
 
     $("#btnAddPayment").on("click", function() {
       const data = {
+        supplier_id: $("#supplier_id").val().trim(),
         refSellerId: $("#refSellerId").val().trim(),
         businessType: $("#businessType").val().trim(),
         company_name: $("#company_name").val().trim(),
@@ -87,7 +91,7 @@
       // SweetAlert 확인창
       Swal.fire({
         title: "지급 요청",
-        text: `셀러 [${data.refSellerId}]에게 ${data.amount}원을 지급요청 하시겠습니까?`,
+        text: `셀러 [${data.company_name}]에게 ${data.amount}원을 지급요청 하시겠습니까?`,
         icon: "question",
         showCancelButton: true,
         confirmButtonText: "지급요청",
@@ -111,9 +115,55 @@
               }
             },
             error: function(xhr) {
-              Swal.fire("에러", xhr.responseJSON?.message || "서버 오류", "error");
+              Swal.fire(xhr.responseJSON?.code, xhr.responseJSON?.message || "서버 오류", "error");
             }
           });
+        }
+      });
+    });
+  });
+
+  // 지급취소 클릭
+  $(document).on("click", ".btn-cancel", function () {
+    const $btn = $(this);
+    const payoutId = $btn.data("payoutId");
+    const companyName = $btn.data("companyName");
+    const amount = $btn.data("amount");
+    const payoutDate = $btn.data("payoutDate");
+
+    const payload = payoutId
+
+    Swal.fire({
+      title: "지급취소",
+      text: `[${companyName}]의 ${payoutDate} ${Number(amount).toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}원 지급을 취소 하시겠습니까?`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "취소하기",
+      cancelButtonText: "닫기"
+    }).then((r) => {
+      if (!r.isConfirmed) return;
+
+      $btn.prop("disabled", true).text("취소 중...");
+      $.ajax({
+        url: "/payments/ajax/cancel",
+        method: "POST",
+        contentType: "application/json",
+        data: JSON.stringify({ payoutId: payoutId }),
+        success: function (res) {
+          if (res.code === 20000) {
+            Swal.fire("완료", "지급요청이 취소되었습니다.", "success").then(() => {
+              location.reload();
+            });
+          } else {
+            Swal.fire("오류", res.message || "취소 처리에 실패했습니다.", "error");
+          }
+        },
+        error: function (xhr) {
+          const msg = xhr.responseJSON?.message || xhr.statusText || "서버 오류";
+          Swal.fire("에러", msg, "error");
+        },
+        complete: function () {
+          $btn.prop("disabled", false).text("지급취소");
         }
       });
     });
@@ -142,6 +192,7 @@
         const s = res.item;
     
         // 값 채워넣기
+        $("#supplier_id").val(s.id || "");
         $("#businessType").val(s.businessType || "");
         $("#company_name").val(s.company?.name || "");
         $("#company_businessRegistrationNumber").val(s.company?.businessRegistrationNumber || "");
@@ -149,7 +200,7 @@
     
       } else {
         // 값 초기화
-        $("#businessType, #company_name, #company_businessRegistrationNumber, #company_representativeName").val("");
+        $("#supplier_id, #businessType, #company_name, #company_businessRegistrationNumber, #company_representativeName").val("");
       }
     }).fail(function(xhr) {
       $("#sellerResult").text("오류: " + (xhr.responseJSON?.message || xhr.statusText));
@@ -169,14 +220,14 @@
           <p class="mb-4">공급사별 매출 내역과 정산 내역을 확인하고, 기간별 결제 현황을 조회할 수 있습니다.</p>
 
           <div class="row">
-            <!-- Earnings (Monthly) Card Example -->
-            <div class="col-6">
-              <div class="card border-left-primary shadow h-100 py-2">
+            
+            <div class="col-3">
+              <div class="card border-left-success shadow h-100 py-2">
                 <div class="card-body">
                   <div class="row no-gutters align-items-center">
                     <div class="col mr-2">
                       <div class="text-s font-weight-bold text-uppercase mb-1">
-                        셀러에게 지급할 수 있는 잔액</div>
+                        지급가능 잔액(현재)</div>
                       <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(available)}}원</div>
                     </div>
                     <div class="col-auto">
@@ -186,15 +237,48 @@
                 </div>
               </div>
             </div>
-
-            <!-- Earnings (Monthly) Card Example -->
-            <div class="col-6">
-              <div class="card border-left-success shadow h-100 py-2">
+            
+            <div class="col-3">
+              <div class="card border-left-warning shadow h-100 py-2">
                 <div class="card-body">
                   <div class="row no-gutters align-items-center">
                     <div class="col mr-2">
                       <div class="text-s font-weight-bold text-uppercase mb-1">
-                        셀러에게 지급할 수 없는 잔액</div>
+                        지급대기 금액</div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(waitingPayment)}}원</div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="col-3">
+              <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        지급가능 잔액(예정)</div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(availableExpected)}}원</div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-3">
+              <div class="card border-left-danger shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        전환예정 잔액</div>
                       <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(pending)}}원</div>
                     </div>
                     <div class="col-auto">
@@ -240,8 +324,10 @@
                       <th>계좌번호</th>
                       <th>예금주</th>
                       <th>금액</th>
+                      <th>지급요청일</th>
                       <th>지급일자</th>
                       <th>상태</th>
+                      <th>기능</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -249,14 +335,54 @@
                       <tr>
                         <td>{{ loop.index }}</td>
                         <td>{{ i.refSellerId }}</td>
-                        <td>{{ i.businessType }}</td>
+                        <td>
+                          {% if i.businessType == 'CORPORATE' %}
+                          <div class="btn-sm btn-secondary no-hover">법인사업자</div>
+                          {% endif %}
+                          {% if i.businessType == 'INDIVIDUAL_BUSINESS' %}
+                          <div class="btn-sm btn-secondary no-hover">개인사업자</div>
+                          {% endif %}
+                        </td>
                         <td>{{ i.companyName }}</td>
-                        <td>{{ i.bankCode }}</td>
+                        <td>{{ i.bankCode | bankState_text }}</td>
                         <td>{{ i.accountNumber }}</td>
                         <td>{{ i.holderName }}</td>
                         <td>{{ "{:,.0f}".format(i.amount) }}원</td>
+                        <td>{{ i.requestedAt }}</td>
                         <td>{{ i.payoutDate }}</td>
-                        <td>{{ i.status }}</td>
+                        <td>
+                          {% if i.status == 'REQUESTED' %}
+                          <div class="btn-sm btn-info no-hover">지급요청</div>
+                          {% endif %}
+                          {% if i.status == 'IN_PROGRESS' %}
+                          <div class="btn-sm btn-warning no-hover">처리중</div>
+                          {% endif %}
+                          {% if i.status == 'COMPLETED' %}
+                          <div class="btn-sm btn-success no-hover">지급완료</div>
+                          {% endif %}
+                          {% if i.status == 'FAILED' %}
+                          <div class="btn-sm btn-danger no-hover">지급실패</div>
+                          {% endif %}
+                          {% if i.status == 'CANCELED' %}
+                          <div class="btn-sm btn-danger no-hover">지급취소</div>
+                          {% endif %}
+                        </td>
+                        <td>
+                          {% if i.status == 'REQUESTED' %}
+                          <button
+                            class="btn-sm btn-danger btn-cancel"
+                            data-payout-id="{{ i.payoutId }}"
+                            data-company-name="{{ i.companyName }}"
+                            data-amount="{{ i.amount }}"
+                            data-payout-date="{{ i.payoutDate }}"
+                          >
+                            지급취소
+                          </button>
+                          {% endif %}
+                          {% if i.status != 'REQUESTED' %}
+                          -
+                          {% endif %}
+                        </td>
                       </tr>
                     {% endfor %}
                   </tbody>
@@ -291,6 +417,7 @@
 
         <div class="modal-body">
           <form class="supplierForm" id="supplierForm" novalidate>
+            <input type="hidden" id="supplier_id" name="supplier_id">
             
             <div class="form-group">
               <input type="text" class="form-control form-control-user"
