@@ -12,6 +12,8 @@
 
 <script>
   $(function() {
+    $('[data-toggle="tooltip"]').tooltip();
+
     // 시작일 달력
     $("#startDate").datepicker({
       dateFormat: "yy-mm-dd",
@@ -33,14 +35,72 @@
         $("#startDate").datepicker("option", "maxDate", selectedDate);
       }
     });
+    
+    // 공휴일 목록 (YYYY-MM-DD 형식)
+    const holidayDates = [
+      // ==== 2025 ====
+      "2025-01-01", // 새해
+      "2025-01-28", // 설날 연휴 시작
+      "2025-01-29", // 설날
+      "2025-01-30", // 설날 연휴 끝
+      "2025-03-01", // 삼일절
+      "2025-03-03", // 대체공휴일 (삼일절)
+      "2025-05-05", // 어린이날 + 부처님오신날
+      "2025-05-06", // 대체공휴일
+      "2025-06-06", // 현충일
+      "2025-08-15", // 광복절
+      "2025-10-03", // 개천절
+      "2025-10-05", // 추석 연휴 시작
+      "2025-10-06", // 추석
+      "2025-10-07", // 추석 연휴 끝
+      "2025-10-08", // 대체공휴일 (추석)
+      "2025-10-09", // 한글날
+      "2025-12-25", // 크리스마스
 
+      // ==== 2026 ====
+      "2026-01-01", // 새해
+      "2026-02-16", // 설날 연휴 시작
+      "2026-02-17", // 설날
+      "2026-02-18", // 설날 연휴 끝
+      "2026-03-01", // 삼일절
+      "2026-03-02", // 대체공휴일 (삼일절)
+      "2026-05-05", // 어린이날
+      "2026-05-24", // 부처님오신날
+      "2026-05-25", // 대체공휴일 (부처님오신날)
+      "2026-06-06", // 현충일
+      "2026-08-15", // 광복절
+      "2026-08-17", // 대체공휴일 (광복절)
+      "2026-09-24", // 추석 연휴 시작
+      "2026-09-25", // 추석
+      "2026-09-26", // 추석 연휴 끝
+      "2026-10-03", // 개천절
+      "2026-10-05", // 대체공휴일 (개천절)
+      "2026-10-09", // 한글날
+      "2026-12-25"  // 크리스마스
+    ];
+
+    
     $("#payoutDate").datepicker({
       dateFormat: "yy-mm-dd",    // yyyy-MM-dd 형식
       changeMonth: true,         // 월 선택 가능
       changeYear: true,          // 연도 선택 가능
       showAnim: "slideDown",     // 열릴 때 애니메이션
-      minDate: 0
+      minDate: 0,
+      beforeShowDay: function(date) {
+        const day = date.getDay();
+        const y = date.getFullYear();
+        const m = ("0" + (date.getMonth() + 1)).slice(-2);
+        const d = ("0" + date.getDate()).slice(-2);
+        const dateStr = `${y}-${m}-${d}`;
+    
+        // 주말(토:6, 일:0) 제외 + 공휴일 제외
+        if (day === 0 || day === 6 || holidayDates.includes(dateStr)) {
+          return [false, "ui-state-disabled", "선택 불가"];
+        }
+        return [true, "", ""];
+      }
     });
+    
 
     function toggleFields() {
       const val = $("#scheduleType").val();
@@ -216,53 +276,28 @@
       <div id="content">
         <div class="container-fluid">
           <!-- Page Heading -->
-          <h1 class="h3 mb-2 text-gray-800">결제 관리</h1>
-          <p class="mb-4">공급사별 매출 내역과 정산 내역을 확인하고, 기간별 결제 현황을 조회할 수 있습니다.</p>
+          <h1 class="h3 mb-2 text-gray-800">정산 관리</h1>
+          <p class="mb-4">공급사별 정산 내역을 확인하고, 기간별 정산 현황을 조회할 수 있습니다.</p>
 
           <div class="row">
-            
+
+            <!-- 지급가능 잔액(현재) -->
             <div class="col-3">
               <div class="card border-left-success shadow h-100 py-2">
                 <div class="card-body">
                   <div class="row no-gutters align-items-center">
                     <div class="col mr-2">
                       <div class="text-s font-weight-bold text-uppercase mb-1">
-                        지급가능 잔액(현재)</div>
-                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(available)}}원</div>
-                    </div>
-                    <div class="col-auto">
-                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div class="col-3">
-              <div class="card border-left-warning shadow h-100 py-2">
-                <div class="card-body">
-                  <div class="row no-gutters align-items-center">
-                    <div class="col mr-2">
-                      <div class="text-s font-weight-bold text-uppercase mb-1">
-                        지급대기 금액</div>
-                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(waitingPayment)}}원</div>
-                    </div>
-                    <div class="col-auto">
-                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div class="col-3">
-              <div class="card border-left-primary shadow h-100 py-2">
-                <div class="card-body">
-                  <div class="row no-gutters align-items-center">
-                    <div class="col mr-2">
-                      <div class="text-s font-weight-bold text-uppercase mb-1">
-                        지급가능 잔액(예정)</div>
-                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(availableExpected)}}원</div>
+                        지급가능 잔액(현재)
+                        <i class="fas fa-question-circle text-muted ml-1"
+                          data-toggle="tooltip"
+                          data-placement="top"
+                          title="셀러에게 바로 지급할 수 있는 실제 잔액입니다.">
+                        </i>
+                      </div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">
+                        {{"{:,.0f}".format(available)}}원
+                      </div>
                     </div>
                     <div class="col-auto">
                       <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
@@ -272,14 +307,23 @@
               </div>
             </div>
 
+            <!-- 지급대기 금액 -->
             <div class="col-3">
-              <div class="card border-left-danger shadow h-100 py-2">
+              <div class="card border-left-warning shadow h-100 py-2">
                 <div class="card-body">
                   <div class="row no-gutters align-items-center">
                     <div class="col mr-2">
                       <div class="text-s font-weight-bold text-uppercase mb-1">
-                        전환예정 잔액</div>
-                      <div class="h5 mb-0 font-weight-bold text-gray-800">{{"{:,.0f}".format(pending)}}원</div>
+                        지급대기 금액
+                        <i class="fas fa-question-circle text-muted ml-1"
+                          data-toggle="tooltip"
+                          data-placement="top"
+                          title="이미 지급 요청이 접수되어 처리 대기 중인 금액입니다.">
+                        </i>
+                      </div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">
+                        {{"{:,.0f}".format(waitingPayment)}}원
+                      </div>
                     </div>
                     <div class="col-auto">
                       <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
@@ -288,6 +332,59 @@
                 </div>
               </div>
             </div>
+
+            <!-- 지급가능 잔액(예정) -->
+            <div class="col-3">
+              <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        지급가능 잔액(예정)
+                        <i class="fas fa-question-circle text-muted ml-1"
+                          data-toggle="tooltip"
+                          data-placement="top"
+                          title="지급가능 잔액에서 지급대기 금액을 뺀, 앞으로 지급 가능한 예상 금액입니다.">
+                        </i>
+                      </div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">
+                        {{"{:,.0f}".format(availableExpected)}}원
+                      </div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 전환예정 잔액 -->
+            <div class="col-3">
+              <div class="card border-left-danger shadow h-100 py-2">
+                <div class="card-body">
+                  <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                      <div class="text-s font-weight-bold text-uppercase mb-1">
+                        전환예정 잔액
+                        <i class="fas fa-question-circle text-muted ml-1"
+                          data-toggle="tooltip"
+                          data-placement="top"
+                          title="아직 토스페이먼츠 정산이 완료되지 않아 전환을 기다리고 있는 금액입니다.">
+                        </i>
+                      </div>
+                      <div class="h5 mb-0 font-weight-bold text-gray-800">
+                        {{"{:,.0f}".format(pending)}}원
+                      </div>
+                    </div>
+                    <div class="col-auto">
+                      <i class="fas fa-dollar-sign fa-2x text-gray-300"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
           
           <!-- 리스트 카드 -->
@@ -317,8 +414,8 @@
                   <thead>
                     <tr>
                       <th>No</th>
-                      <th>셀러ID</th>
                       <th>구분</th>
+                      <th>셀러ID</th>
                       <th>상호명</th>
                       <th>은행</th>
                       <th>계좌번호</th>
@@ -331,60 +428,68 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {% for i in items %}
+                    {% if items and items|length > 0 %}
+                      {% for i in items %}
+                        <tr>
+                          <td>{{ loop.index }}</td>
+                          <td>
+                            {% if i.businessType == 'CORPORATE' %}
+                            <div class="btn-sm btn-secondary no-hover">법인사업자</div>
+                            {% endif %}
+                            {% if i.businessType == 'INDIVIDUAL_BUSINESS' %}
+                            <div class="btn-sm btn-secondary no-hover">개인사업자</div>
+                            {% endif %}
+                          </td>
+                          <td>{{ i.refSellerId }}</td>
+                          <td>{{ i.companyName }}</td>
+                          <td>{{ i.bankCode | bankState_text }}</td>
+                          <td>{{ i.accountNumber }}</td>
+                          <td>{{ i.holderName }}</td>
+                          <td>{{ "{:,.0f}".format(i.amount) }}원</td>
+                          <td>{{ i.requestedAt }}</td>
+                          <td>{{ i.payoutDate }}</td>
+                          <td>
+                            {% if i.status == 'REQUESTED' %}
+                            <div class="btn-sm btn-primary no-hover">지급요청</div>
+                            {% endif %}
+                            {% if i.status == 'IN_PROGRESS' %}
+                            <div class="btn-sm btn-warning no-hover">처리중</div>
+                            {% endif %}
+                            {% if i.status == 'COMPLETED' %}
+                            <div class="btn-sm btn-info no-hover">지급완료</div>
+                            {% endif %}
+                            {% if i.status == 'FAILED' %}
+                            <div class="btn-sm btn-danger no-hover">지급실패</div>
+                            {% endif %}
+                            {% if i.status == 'CANCELED' %}
+                            <div class="btn-sm btn-danger no-hover">지급취소</div>
+                            {% endif %}
+                          </td>
+                          <td>
+                            {% if i.status == 'REQUESTED' %}
+                            <button
+                              class="btn-sm btn-danger btn-cancel"
+                              data-payout-id="{{ i.payoutId }}"
+                              data-company-name="{{ i.companyName }}"
+                              data-amount="{{ i.amount }}"
+                              data-payout-date="{{ i.payoutDate }}"
+                            >
+                              지급취소
+                            </button>
+                            {% endif %}
+                            {% if i.status != 'REQUESTED' %}
+                            -
+                            {% endif %}
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    {% else %}
                       <tr>
-                        <td>{{ loop.index }}</td>
-                        <td>{{ i.refSellerId }}</td>
-                        <td>
-                          {% if i.businessType == 'CORPORATE' %}
-                          <div class="btn-sm btn-secondary no-hover">법인사업자</div>
-                          {% endif %}
-                          {% if i.businessType == 'INDIVIDUAL_BUSINESS' %}
-                          <div class="btn-sm btn-secondary no-hover">개인사업자</div>
-                          {% endif %}
-                        </td>
-                        <td>{{ i.companyName }}</td>
-                        <td>{{ i.bankCode | bankState_text }}</td>
-                        <td>{{ i.accountNumber }}</td>
-                        <td>{{ i.holderName }}</td>
-                        <td>{{ "{:,.0f}".format(i.amount) }}원</td>
-                        <td>{{ i.requestedAt }}</td>
-                        <td>{{ i.payoutDate }}</td>
-                        <td>
-                          {% if i.status == 'REQUESTED' %}
-                          <div class="btn-sm btn-info no-hover">지급요청</div>
-                          {% endif %}
-                          {% if i.status == 'IN_PROGRESS' %}
-                          <div class="btn-sm btn-warning no-hover">처리중</div>
-                          {% endif %}
-                          {% if i.status == 'COMPLETED' %}
-                          <div class="btn-sm btn-success no-hover">지급완료</div>
-                          {% endif %}
-                          {% if i.status == 'FAILED' %}
-                          <div class="btn-sm btn-danger no-hover">지급실패</div>
-                          {% endif %}
-                          {% if i.status == 'CANCELED' %}
-                          <div class="btn-sm btn-danger no-hover">지급취소</div>
-                          {% endif %}
-                        </td>
-                        <td>
-                          {% if i.status == 'REQUESTED' %}
-                          <button
-                            class="btn-sm btn-danger btn-cancel"
-                            data-payout-id="{{ i.payoutId }}"
-                            data-company-name="{{ i.companyName }}"
-                            data-amount="{{ i.amount }}"
-                            data-payout-date="{{ i.payoutDate }}"
-                          >
-                            지급취소
-                          </button>
-                          {% endif %}
-                          {% if i.status != 'REQUESTED' %}
-                          -
-                          {% endif %}
+                        <td colspan="12" class="text-muted py-4">
+                          <i class="fas fa-info-circle"></i> 현재 표시할 지급 내역이 없습니다.
                         </td>
                       </tr>
-                    {% endfor %}
+                    {% endif %}
                   </tbody>
                 </table>
               </div>
@@ -411,7 +516,17 @@
       <div class="modal-content">
 
         <div class="modal-header">
-          <h5 class="modal-title" id="exampleModalLabel">지급 요청서 작성</h5>
+          <h5 class="modal-title" id="exampleModalLabel">
+            지급 요청서 작성
+            <i class="fas fa-question-circle text-muted ml-2"
+               data-toggle="tooltip"
+               data-html="true"
+               data-placement="right"
+               title="
+               지급 대상 셀러에게 정산 금액을 이체하고 요청 시점에 잔액이 부족하면 지급은 실패합니다.
+               ">
+            </i>
+          </h5>
           <button class="close" type="button" data-dismiss="modal" aria-label="Close"><span>×</span></button>
         </div>
 
@@ -469,12 +584,20 @@
               <input type="text" class="form-control form-control-user"
                      id="payoutDate" name="payoutDate"
                      placeholder="지급일 YYYY-MM-DD" maxlength="10">
-            </div>
+              <small class="form-text text-muted">
+                지급일은 <strong>오늘 이후 1년 이내의 영업일</strong>만 선택할 수 있습니다.<br>
+                (휴일·공휴일·주말 및 과거 일자는 선택 불가)
+              </small>
+            </div>            
             
             <div class="form-group" id="infoGroup">
               <input type="text" class="form-control form-control-user"
                      id="info" name="info"
-                     value="오전 8시 ~ 오후 3시에만 즉시 지급됩니다." readonly>
+                     value="날짜입력불가" readonly>
+              <small class="form-text text-muted">
+                <strong>요청서를 작성하면 즉시 지급됩니다.</strong><br>
+                (바로지급은 오전 8시 ~ 오후 3시에만 작성가능)
+              </small>
             </div>
 
           </form>

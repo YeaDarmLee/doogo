@@ -154,7 +154,6 @@ def ajax_add_payment():
     ref_base = (data["refSellerId"] or "").strip()
     stamp    = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
     suffix   = uuid.uuid4().hex[:6]
-    
     ref_payout_id = f"{ref_base}-{stamp}-{suffix}"
 
     # Toss API 호출용 지급 요청 바디 구성

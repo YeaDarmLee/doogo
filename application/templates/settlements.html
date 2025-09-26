@@ -5,6 +5,9 @@
   .card-body {
     padding: 0.75rem;
   }
+  .no-hover {
+    pointer-events: none;
+  }
 </style>
 
 <script>
@@ -30,6 +33,14 @@
         $("#startDate").datepicker("option", "maxDate", selectedDate);
       }
     });
+
+    // 🔹 검색 버튼 동작 추가
+    $("#btnSearch").on("click", function () {
+      const start = $("#startDate").val();
+      const end   = $("#endDate").val();
+      const qs = $.param({ startDate: start, endDate: end });
+      window.location.href = "/settlements/?" + qs;
+    });
   });
 </script>
 
@@ -41,13 +52,16 @@
       <div id="content">
         <div class="container-fluid">
           <!-- Page Heading -->
-          <h1 class="h3 mb-2 text-gray-800">정산 기록</h1>
-          <p class="mb-4">지정한 날짜 정보로 정산 기록을 조회합니다.</p>
+          <h1 class="h3 mb-2 text-gray-800">결제 기록</h1>
+          <p class="mb-4">
+            지정한 날짜 정보로 결제 기록을 조회합니다.<br>
+            결제 기록은 결제가 일어난 다음 날부터 조회됩니다. 
+          </p>
           
           <!-- 리스트 카드 -->
           <div class="card shadow mt-4">
             <div class="card-header py-3 d-sm-flex align-items-center">
-              <h6 class="m-0 font-weight-bold text-primary">정산 목록</h6>
+              <h6 class="m-0 font-weight-bold text-primary">결제 목록</h6>
               
               <input type="text" class="form-control form-control-user ml-2"
                 id="startDate" name="startDate"
@@ -67,7 +81,7 @@
                 <table class="table table-bordered text-center" id="dataTable" width="100%" cellspacing="0">
                   <thead>
                     <tr>
-                      <th>#</th>
+                      <th>No</th>
                       <th>주문ID</th>
                       <th>결제수단</th>
                       <th>승인일시</th>
@@ -78,18 +92,45 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {% for i in items %}
+                    {% if items and items|length > 0 %}
+                      {% for i in items %}
+                        <tr>
+                          <td>{{ loop.index }}</td>
+                          <td>{{ i.orderId }}</td>
+                          <td>{{ i.method }}</td>
+                          <td>{{ i.approvedAt }}</td>
+                  
+                          <td>
+                            {% if i.amount > 0 %}
+                              <div class="btn-sm btn-info no-hover">{{ "{:,.0f}".format(i.amount) }}원</div>
+                            {% elif i.amount < 0 %}
+                              <div class="btn-sm btn-danger no-hover">{{ "{:,.0f}".format(i.amount) }}원</div>
+                            {% else %}
+                              <div class="btn-sm btn-secondary no-hover">0원</div>
+                            {% endif %}
+                          </td>
+                  
+                          <td>
+                            {% if i.fee > 0 %}
+                              <div class="btn-sm btn-info no-hover">{{ "{:,.0f}".format(i.fee) }}원</div>
+                            {% elif i.fee < 0 %}
+                              <div class="btn-sm btn-danger no-hover">{{ "{:,.0f}".format(i.fee) }}원</div>
+                            {% else %}
+                              <div class="btn-sm btn-secondary no-hover">0원</div>
+                            {% endif %}
+                          </td>
+                  
+                          <td>{{ i.paidOutDate }}</td>
+                          <td>{{ i.transfer.settlementStatus if i.transfer else (i.cancel.cancelStatus if i.cancel else "정상") }}</td>
+                        </tr>
+                      {% endfor %}
+                    {% else %}
                       <tr>
-                        <td>{{ loop.index }}</td>
-                        <td>{{ i.orderId }}</td>
-                        <td>{{ i.method }}</td>
-                        <td>{{ i.approvedAt }}</td>
-                        <td>{{ "{:,.0f}".format(i.amount) }}원</td>
-                        <td>{{ "{:,.0f}".format(i.fee) }}원</td>
-                        <td>{{ i.paidOutDate }}</td>
-                        <td>{{ i.transfer.settlementStatus if i.transfer else (i.cancel.cancelStatus if i.cancel else "정상") }}</td>
+                        <td colspan="8" class="text-muted py-4">
+                          <i class="fas fa-info-circle"></i> 정산 내역이 없습니다.
+                        </td>
                       </tr>
-                    {% endfor %}
+                    {% endif %}
                   </tbody>
                 </table>
               </div>

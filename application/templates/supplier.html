@@ -1,5 +1,10 @@
 <!-- header -->
 {% include './common/header.html' %}
+<style>
+  .no-hover {
+    pointer-events: none;
+  }
+</style>
 
 <script>
   /**
@@ -40,8 +45,24 @@
         `<button class="btn btn-sm btn-warning ml-1 btn-resend" ` +
         `data-seq="${s.seq}" title="계약서 재발송">계약서 재발송</button>`
       );
+    } else if (s.contractStatus === 'S' || s.contractStatus === 'SS') {
+      return (
+        `<div class="btn-sm btn-info no-hover">${STATE_CONTRACT_CODE_MAP[s.contractStatus] || ''}</div>`
+      )
+    } else if (s.contractStatus === 'P' || s.contractStatus === 'A') {
+      return (
+        `<div class="btn-sm btn-primary no-hover">${STATE_CONTRACT_CODE_MAP[s.contractStatus] || ''}</div>`
+      )
     }
     return STATE_CONTRACT_CODE_MAP[s.contractStatus] || '';
+  }
+
+  function renderStateBadge(code) {
+    const label = escapeHtml(STATE_CODE_MAP[code] || '');
+    if (code === 'E') return `<div class="btn-sm btn-danger no-hover">${label}</div>`;
+    if (code === 'P') return `<div class="btn-sm btn-primary no-hover">${label}</div>`;
+    if (code === 'I') return `<div class="btn-sm btn-warning no-hover">${label}</div>`;
+    return `<div class="btn-sm btn-info no-hover">${label}</div>`;
   }
 
   // FormData → 객체 (문자열은 trim)
@@ -218,19 +239,28 @@
 
     if (hasDT) {
       const dt = $(tableSel).DataTable();
-      const rows = list.map(s => ([
-        s.seq,
-        escapeHtml(s.companyName),
-        escapeHtml(s.supplierCode),
-        STATE_CODE_MAP[s.stateCode] || '',
-        renderContractCell(s),
-        escapeHtml(s.supplierID),
-        escapeHtml(s.manager),
-        escapeHtml(s.managerRank),
-        escapeHtml(s.number),
-        escapeHtml(s.email),
-        `<a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit" data-seq="${s.seq}">수정</a>`
-      ]));
+
+      const rows = list.map(s => {
+        const contractCell = renderContractCell(s);
+        const stateCode = renderStateBadge(s.stateCode);
+        const supplierCode = `<div class="btn-sm btn-secondary no-hover">${escapeHtml(s.supplierCode)}</div>`;
+        const editBtn = `<a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit" data-seq="${s.seq}">수정</a>`;
+    
+        return [
+          s.seq,
+          escapeHtml(s.companyName),
+          supplierCode,
+          stateCode,
+          contractCell,
+          escapeHtml(s.supplierID),
+          escapeHtml(s.manager),
+          escapeHtml(s.managerRank),
+          escapeHtml(s.number),
+          escapeHtml(s.email),
+          editBtn
+        ];
+      });
+
       dt.clear();
       dt.rows.add(rows);
       dt.draw(false);
@@ -239,12 +269,14 @@
       let html = '';
       list.forEach(s => {
         const contractCell = renderContractCell(s);
+        const stateCode = renderStateBadge(s.stateCode);
+
         html += `
           <tr data-seq="${s.seq}">
             <td>${s.seq}</td>
             <td>${escapeHtml(s.companyName)}</td>
-            <td>${escapeHtml(s.supplierCode)}</td>
-            <td>${escapeHtml(STATE_CODE_MAP[s.stateCode] || '')}</td>
+            <td><div class="btn-sm btn-secondary no-hover">${escapeHtml(s.supplierCode)}</div></td>
+            <td>${stateCode}</td>
             <td>${contractCell}</td>
             <td>${escapeHtml(s.supplierID)}</td>
             <td>${escapeHtml(s.manager)}</td>
@@ -618,7 +650,10 @@
 
           <!-- Page Heading -->
           <h1 class="h3 mb-2 text-gray-800">공급사 관리</h1>
-          <p class="mb-4">공급사 관리 관련된 간단한 설명 들어갈 예정</p>
+          <p class="mb-4">
+            공급사 등록, 수정 및 계약서 관리 기능을 제공합니다.<br>
+            신규 공급사를 등록하면 Slack 채널이 자동 생성되고, 계약 진행 상태를 실시간으로 확인할 수 있습니다.
+          </p>
 
           <!-- DataTales Example -->
           <div class="card shadow mb-4">
@@ -635,7 +670,7 @@
                 <table class="table table-bordered text-center" id="dataTable" width="100%" cellspacing="0">
                   <thead>
                     <tr>
-                      <th>SEQ</th>
+                      <th>No</th>
                       <th>회사명</th>
                       <th>CAFE24 코드</th>
                       <th>Slack</th>
@@ -651,13 +686,31 @@
                   <tbody>
                     {% for supplier in supplierList %}
                       <tr data-seq="{{ supplier.seq }}">
-                        <td>{{ supplier.seq }}</td>
+                        <td>{{ loop.index }}</td>
                         <td>{{ supplier.companyName }}</td>
-                        <td>{{ supplier.supplierCode }}</td>
-                        <td>{{ supplier.stateCode | state_text }}</td>
                         <td>
-                          {% if supplier.contractStatus != 'E' %}
-                            {{ supplier.contractStatus | contractState_text }}
+                          <div class="btn-sm btn-secondary no-hover">{{ supplier.supplierCode }}</div>
+                        </td>
+                        <td>
+                          {% if supplier.stateCode == 'E' %}
+                          <div class="btn-sm btn-danger no-hover">{{ supplier.stateCode | state_text }}</div>
+                          {% endif %}
+                          {% if supplier.stateCode == 'P' %}
+                          <div class="btn-sm btn-primary no-hover">{{ supplier.stateCode | state_text }}</div>
+                          {% endif %}
+                          {% if supplier.stateCode == 'I' %}
+                          <div class="btn-sm btn-warning no-hover">{{ supplier.stateCode | state_text }}</div>
+                          {% endif %}
+                          {% if supplier.stateCode != 'E' %}
+                          <div class="btn-sm btn-info no-hover">{{ supplier.stateCode | state_text }}</div>
+                          {% endif %}
+                        </td>
+                        <td>
+                          {% if supplier.contractStatus in ['SS', 'S'] %}
+                            <div class="btn-sm btn-info no-hover">{{ supplier.contractStatus | contractState_text }}</div>
+                          {% endif %}
+                          {% if supplier.contractStatus in ['P', 'A'] %}
+                            <div class="btn-sm btn-primary no-hover">{{ supplier.contractStatus | contractState_text }}</div>
                           {% endif %}
                           {% if supplier.contractStatus == 'E' %}
                             <button
