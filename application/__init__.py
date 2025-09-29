@@ -108,8 +108,17 @@ def contractState_text(code):
   return STATE_CONTRACT_CODE_MAP.get(code, "")
 def bankState_text(code):
   return BANK_CODE_MAP.get(code, "")
+def bizno_format(value):
+  """사업자등록번호 하이픈 포맷 (1234567890 -> 123-45-67890)"""
+  if not value:
+    return ""
+  digits = "".join(ch for ch in str(value) if ch.isdigit())
+  if len(digits) == 10:
+    return f"{digits[0:3]}-{digits[3:5]}-{digits[5:10]}"
+  return value
 
 # Jinja 필터 등록
 app.jinja_env.filters["state_text"] = state_text
 app.jinja_env.filters["contractState_text"] = contractState_text
 app.jinja_env.filters["bankState_text"] = bankState_text
+app.jinja_env.filters["bizno_format"] = bizno_format

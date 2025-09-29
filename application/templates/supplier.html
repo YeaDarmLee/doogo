@@ -107,6 +107,23 @@
     supplierEmail:       { required: false, email: true, max: 30 } // VARCHAR(30)
   };
 
+  // 상세 입력 규칙
+  const DETAIL_RULES = {
+    businessRegistrationNumber: { required: false, biz10: true },
+    bankCode: { required: false }, // 은행 선택을 필수로 하려면 required: true
+    accountNumber: { required: false, max: 30 }
+  };
+
+  // 숫자/정수 검사기 보강 (이미 존재)
+  function isNumber(val) { return !isNaN(val) && val !== '' && isFinite(Number(val)); }
+  function isInteger(val) { return /^\d+$/.test(String(val)); }
+
+  // 사업자번호 10자리 검증
+  function isBiz10(val) {
+    const d = String(val || '').replace(/\D/g, '');
+    return d.length === 10;
+  }
+
   // 기본 형식 검증
   function isValidEmail(val) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
@@ -190,6 +207,12 @@
       showFieldError(inputEl, '올바른 URL 형식이 아닙니다.');
       return { ok: false };
     }
+    const rules = VALIDATION_RULES[name] || DETAIL_RULES[name];  // ★ 여기 추가
+    if (!rules) return { ok: true };
+    if (rules.biz10 && !isBiz10(raw)) {          // ★ 사업자번호 10자리
+      showFieldError(inputEl, '사업자등록번호는 숫자 10자리여야 합니다.');
+      return { ok: false };
+    }
 
     showFieldValid(inputEl);
     return { ok: true };
@@ -205,93 +228,6 @@
       if (!res.ok) errors[key] = true;
     });
     return { ok: Object.keys(errors).length === 0, errors };
-  }
-
-  /**
-   * ===========================================
-   *  테이블 렌더/리로드
-   *  - DataTables 사용/미사용 모두 지원
-   *  - "수정" 버튼에 .btn-edit + data-seq 부착
-   * ===========================================
-   */
-
-  // 서버에서 최신 리스트 가져오기 (현재 POST /supplier/ajax/getSupplierList)
-  function reloadSupplierTable() {
-    return $.ajax({
-      url: '/supplier/ajax/getSupplierList',
-      method: 'POST',
-      dataType: 'json'
-    }).then(res => {
-      if (res.code === 20000 && Array.isArray(res.supplierList)) {
-        renderSupplierTable(res.supplierList);
-      } else {
-        alertStart('error', '리스트 조회 실패', '공급사 리스트를 불러오지 못했습니다.');
-      }
-    }).catch(() => {
-      alertStart('error', '리스트 조회 실패', '공급사 리스트를 불러오지 못했습니다.');
-    });
-  }
-
-  // 리스트 렌더러
-  function renderSupplierTable(list) {
-    const tableSel = '#dataTable';
-    const hasDT = $.fn.DataTable && $.fn.dataTable.isDataTable(tableSel);
-
-    if (hasDT) {
-      const dt = $(tableSel).DataTable();
-
-      const rows = list.map(s => {
-        const contractCell = renderContractCell(s);
-        const stateCode = renderStateBadge(s.stateCode);
-        const supplierCode = `<div class="btn-sm btn-secondary no-hover">${escapeHtml(s.supplierCode)}</div>`;
-        const editBtn = `<a href="#" class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit" data-seq="${s.seq}">수정</a>`;
-    
-        return [
-          s.seq,
-          escapeHtml(s.companyName),
-          supplierCode,
-          stateCode,
-          contractCell,
-          escapeHtml(s.supplierID),
-          escapeHtml(s.manager),
-          escapeHtml(s.managerRank),
-          escapeHtml(s.number),
-          escapeHtml(s.email),
-          editBtn
-        ];
-      });
-
-      dt.clear();
-      dt.rows.add(rows);
-      dt.draw(false);
-    } else {
-      const tbody = document.querySelector('#dataTable tbody');
-      let html = '';
-      list.forEach(s => {
-        const contractCell = renderContractCell(s);
-        const stateCode = renderStateBadge(s.stateCode);
-
-        html += `
-          <tr data-seq="${s.seq}">
-            <td>${s.seq}</td>
-            <td>${escapeHtml(s.companyName)}</td>
-            <td><div class="btn-sm btn-secondary no-hover">${escapeHtml(s.supplierCode)}</div></td>
-            <td>${stateCode}</td>
-            <td>${contractCell}</td>
-            <td>${escapeHtml(s.supplierID)}</td>
-            <td>${escapeHtml(s.manager)}</td>
-            <td>${escapeHtml(s.managerRank)}</td>
-            <td>${escapeHtml(s.number)}</td>
-            <td>${escapeHtml(s.email)}</td>
-            <td>
-              <a href="#"
-                class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit"
-                data-seq="${s.seq}">수정</a>
-            </td>
-          </tr>`;
-      });
-      tbody.innerHTML = html;
-    }
   }
 
   /**
@@ -350,9 +286,11 @@
         cache: false,
         success: function (res) {
           if (res.code === 20000) {
-            alertStartHtml('success', '공급사 등록 완료', '공급사 등록이 완료되었습니다.<br>Slack 생성 프로세스가 시작됩니다.');
-            $('#addSupplierClose').click(); // 모달 닫기
-            reloadSupplierTable();          // 최신 리스트 반영
+            alertStartHtml('success', '공급사 등록 완료', '공급사 등록이 완료되었습니다.<br>Slack 생성 프로세스가 시작됩니다.')
+            .then(function () {
+              $('#addSupplierClose').click(); // 모달 닫기
+              location.reload();
+            });
           } else {
             alertStart('error', '공급사 등록 실패', '공급사 등록에 실패하였습니다.');
           }
@@ -544,9 +482,11 @@
       data: JSON.stringify(payload),
       success: function(res) {
         if (res.code === 20000) {
-          $('#editSupplier').modal('hide');
-          reloadSupplierTable();
-          alertStart('success', '수정 완료', '공급사 정보가 수정되었습니다.');
+          alertStart('success', '수정 완료', '공급사 정보가 수정되었습니다.')
+          .then(function () {
+            $('#editSupplier').modal('hide');
+            location.reload();
+          })
         } else if (res.code === 40900) {
           alertStart('warning', '동시 수정 감지', '다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요.');
         } else if (res.code === 40001) {
@@ -563,10 +503,6 @@
 
   // 페이지 로드시 필요 시 초기 동기화
   $(function() {
-    // DataTables 초기화가 필요하면 여기서 init
-    // $('#dataTable').DataTable({ searching: true, paging: true, info: true });
-    // 서버 렌더 + API 기준 정합을 맞추고 싶다면 주석 해제
-    // reloadSupplierTable();
   });
 
   // ▼ 유효성 규칙 확장
@@ -617,9 +553,10 @@
         data: JSON.stringify({ seq }),
       }).done((r) => {
         if (r.code === 20000) {
-          alertStart('success', '재발송 요청 완료', '계약서 재발송이 요청되었습니다.');
-          // 최신 상태 반영
-          reloadSupplierTable();
+          alertStart('success', '재발송 요청 완료', '계약서 재발송이 요청되었습니다.')
+          .then(function () {
+            location.reload();
+          });
         } else {
           alertStart('error', '재발송 실패', r.message || '계약서 재발송 처리에 실패했습니다.');
         }
@@ -656,7 +593,7 @@
           </p>
 
           <!-- DataTales Example -->
-          <div class="card shadow mb-4">
+          <div class="card shadow mb-4" style="zoom: 0.9;">
             <div class="card-header py-3 d-sm-flex align-items-center justify-content-between">
               <h6 class="m-0 font-weight-bold text-primary">공급사 리스트</h6>
               <!-- 등록 모달 열기: resetForm으로 값/상태 초기화 후 오픈 -->
@@ -672,6 +609,7 @@
                     <tr>
                       <th>No</th>
                       <th>회사명</th>
+                      <th>사업자번호</th>
                       <th>CAFE24 코드</th>
                       <th>Slack</th>
                       <th>계약서 작성여부</th>
@@ -680,6 +618,8 @@
                       <th>직책</th>
                       <th>연락처</th>
                       <th>이메일</th>
+                      <th>정산은행</th>
+                      <th>계좌번호</th>
                       <th>기능</th>
                     </tr>
                   </thead>
@@ -688,6 +628,7 @@
                       <tr data-seq="{{ supplier.seq }}">
                         <td>{{ loop.index }}</td>
                         <td>{{ supplier.companyName }}</td>
+                        <td>{{ supplier.detail.businessRegistrationNumber | bizno_format }}</td>
                         <td>
                           <div class="btn-sm btn-secondary no-hover">{{ supplier.supplierCode }}</div>
                         </td>
@@ -726,6 +667,8 @@
                         <td>{{ supplier.managerRank }}</td>
                         <td>{{ supplier.number }}</td>
                         <td>{{ supplier.email }}</td>
+                        <td>{{ supplier.detail.bankCode | bankState_text }}</td>
+                        <td>{{ supplier.detail.accountNumber }}</td>
                         <td>
                           <!-- ✅ 수정 버튼에 클래스/식별자 부착 -->
                           <a href="#"
@@ -900,6 +843,38 @@
               </div>
             </div>
 
+            <!-- 정산 정보: 사업자/은행/계좌 -->
+            <div class="border-top pt-3 mt-3">
+              <div class="form-group">
+                <input type="text" class="form-control form-control-user"
+                      id="businessRegistrationNumber" name="businessRegistrationNumber"
+                      placeholder="사업자등록번호 (숫자만 10자리)" maxlength="12">
+                <div class="invalid-feedback">사업자등록번호는 숫자 10자리여야 합니다.</div>
+              </div>
+
+              <div class="form-group">
+                <!-- 필요하면 은행코드 옵션을 서버에서 렌더링해도 되고, 간단히 텍스트로 받아도 OK -->
+                <select class="form-control" id="bankCode" name="bankCode">
+                  <option value="">정산은행 선택</option>
+                  <option value="088">신한은행</option>
+                  <option value="004">국민은행</option>
+                  <option value="081">하나은행</option>
+                  <option value="011">농협은행</option>
+                  <option value="020">우리은행</option>
+                  <!-- ... 프로젝트 BANK_CODE_MAP에 맞춰 추가 -->
+                </select>
+                <div class="invalid-feedback">정산은행을 선택해 주세요.</div>
+              </div>
+
+              <div class="form-group">
+                <input type="text" class="form-control form-control-user"
+                      id="accountNumber" name="accountNumber"
+                      placeholder="계좌번호 (숫자/‘-’ 허용)" maxlength="30">
+                <div class="invalid-feedback">유효한 계좌번호를 입력해 주세요.</div>
+              </div>
+            </div>
+
+
           </form>
         </div>
 
@@ -973,6 +948,83 @@
               <input type="email" class="form-control" name="email" placeholder="이메일" maxlength="30">
               <div class="invalid-feedback">올바른 이메일 형식이 아닙니다.</div>
             </div>
+
+            <!-- (수정) 계약서 선택/입력 -->
+            <div class="border-top pt-3 mt-3">
+              <div class="form-group">
+                <label class="small text-muted mb-1">계약서 선택</label>
+                <select class="form-control" id="editContractTemplate" name="contractTemplate">
+                  <option value="">선택안함</option>
+                  <option value="A">A. 단일 수수료(%)</option>
+                  <option value="B">B. 특정금액 기준 구간별 수수료</option>
+                </select>
+              </div>
+
+              <div id="editContractAFields" class="d-none">
+                <div class="form-group">
+                  <input type="number" step="0.01" min="0" max="100"
+                        class="form-control" id="editContractPercent" name="contractPercent"
+                        placeholder="수수료(%)">
+                  <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+                </div>
+              </div>
+
+              <div id="editContractBFields" class="d-none">
+                <div class="form-group">
+                  <input type="number" step="1" min="0"
+                        class="form-control" id="editContractThreshold" name="contractThreshold"
+                        placeholder="특정 금액(원)">
+                  <div class="invalid-feedback">0 이상의 금액을 입력해 주세요.</div>
+                </div>
+                <div class="form-group">
+                  <input type="number" step="0.01" min="0" max="100"
+                        class="form-control" id="editContractPercentUnder" name="contractPercentUnder"
+                        placeholder="이하일 때 수수료(%)">
+                  <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+                </div>
+                <div class="form-group">
+                  <input type="number" step="0.01" min="0" max="100"
+                        class="form-control" id="editContractPercentOver" name="contractPercentOver"
+                        placeholder="초과일 때 수수료(%)">
+                  <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
+                </div>
+              </div>
+
+              <div class="form-group form-check mt-2">
+                <input type="checkbox" class="form-check-input" id="editContractSkip" name="contractSkip" value="1">
+                <label class="form-check-label" for="editContractSkip">이미 계약서를 제출한 업체(발송 스킵)</label>
+              </div>
+            </div>
+
+            <!-- (수정) 정산 정보 -->
+            <div class="border-top pt-3 mt-3">
+              <div class="form-group">
+                <input type="text" class="form-control"
+                      name="businessRegistrationNumber"
+                      placeholder="사업자등록번호 (숫자만 10자리)" maxlength="12">
+                <div class="invalid-feedback">사업자등록번호는 숫자 10자리여야 합니다.</div>
+              </div>
+
+              <div class="form-group">
+                <select class="form-control" name="bankCode">
+                  <option value="">정산은행 선택</option>
+                  <option value="088">신한은행</option>
+                  <option value="004">국민은행</option>
+                  <option value="081">하나은행</option>
+                  <option value="011">농협은행</option>
+                  <option value="020">우리은행</option>
+                  <!-- ... -->
+                </select>
+                <div class="invalid-feedback">정산은행을 선택해 주세요.</div>
+              </div>
+
+              <div class="form-group">
+                <input type="text" class="form-control"
+                      name="accountNumber" placeholder="계좌번호 (숫자/‘-’ 허용)" maxlength="30">
+                <div class="invalid-feedback">유효한 계좌번호를 입력해 주세요.</div>
+              </div>
+            </div>
+
           </form>
         </div>
 

@@ -373,7 +373,8 @@ def after_slack_success(supplier: SupplierList):
       return
 
     fields = [
-      {"id": "수수료", "value": f"수수료 {pct}% 를"}
+      {"id": "수수료", "value": f"수수료 {pct}% 를"},
+      {"id": "수수료_int", "value": f"{pct}"}
     ]
     template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_A")
 

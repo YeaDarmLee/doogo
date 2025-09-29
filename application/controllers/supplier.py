@@ -7,6 +7,7 @@ import os, requests, base64, json
 from typing import Any, Dict, Optional
 
 from application.src.models.SupplierList import SupplierList
+from application.src.models.SupplierDetail import SupplierDetail
 from application.src.repositories.SupplierListRepository import (
   SupplierListRepository,
   STATE_PENDING, STATE_APPROVED, STATE_REJECTED
@@ -34,6 +35,56 @@ def _cafe24_headers():
     "Content-Type": "application/json"
   }
 
+# --- 공통: 상세 머지 유틸 ---
+def _merge_supplier_with_detail(s: SupplierList, d: Optional[SupplierDetail]) -> dict:
+  """
+  SupplierList + SupplierDetail 을 하나의 dict 로 합쳐 프런트에 전달
+  """
+  base = {
+    "seq": s.seq,
+    "companyName": s.companyName or "",
+    "supplierCode": getattr(s, "supplierCode", "") or "",
+    "stateCode": getattr(s, "stateCode", "") or "",
+    "channelId": getattr(s, "channelId", "") or "",
+    "contractStatus": getattr(s, "contractStatus", "") or "",
+    "supplierID": s.supplierID or "",
+    "supplierPW": getattr(s, "supplierPW", "") or "",
+    "supplierURL": s.supplierURL or "",
+    "manager": s.manager or "",
+    "managerRank": s.managerRank or "",
+    "number": s.number or "",
+    "email": s.email or "",
+    "updatedAt": s.updatedAt.isoformat() if getattr(s, "updatedAt", None) else None,
+  }
+  if not d:
+    # 상세가 아직 없으면 상세 블록을 None/빈값으로 채워 넣기
+    base["detail"] = {
+      "businessType": None,
+      "companyName": None,
+      "representativeName": None,
+      "businessRegistrationNumber": None,
+      "companyEmail": None,
+      "companyPhone": None,
+      "bankCode": None,
+      "accountNumber": None,
+      "holderName": None,
+    }
+    return base
+
+  base["detail"] = {
+    "businessType": d.businessType,
+    "companyName": d.companyName,
+    "representativeName": d.representativeName,
+    "businessRegistrationNumber": d.businessRegistrationNumber,
+    "companyEmail": d.companyEmail,
+    "companyPhone": d.companyPhone,
+    "bankCode": d.bankCode,
+    "accountNumber": d.accountNumber,
+    "holderName": d.holderName,
+    "createdAt": d.createdAt.isoformat() if getattr(d, "createdAt", None) else None,
+    "updatedAt": d.updatedAt.isoformat() if getattr(d, "updatedAt", None) else None,
+  }
+  return base
 
 # -----------------------------------
 # View: 공급사 관리 페이지
@@ -41,26 +92,12 @@ def _cafe24_headers():
 @supplier.route("/", methods=["GET"])
 @jwt_required()
 def index():
-  items = SupplierListRepository.findApproved()
-
-  def to_Dict(x: SupplierList) -> dict:
-    return {
-      "seq": x.seq,
-      "companyName": x.companyName or "",
-      "supplierCode": x.supplierCode or "",
-      "stateCode": getattr(x, "stateCode", "") or "",
-      "channelId": x.channelId or "",
-      "contractStatus": x.contractStatus or "",
-      "supplierID": x.supplierID or "",
-      "supplierPW": x.supplierPW or "",
-      "supplierURL": x.supplierURL or "",
-      "manager": x.manager or "",
-      "managerRank": x.managerRank or "",
-      "number": x.number or "",
-      "email": x.email or ""
-    }
-
-  return render_template("supplier.html", pageName="supplier", supplierList=[to_Dict(s) for s in items])
+  items = SupplierListRepository.findApproved()  # 승인된 공급사
+  merged = []
+  for s in items:
+    d = SupplierDetailRepository.findBySupplierSeq(s.seq)
+    merged.append(_merge_supplier_with_detail(s, d))
+  return render_template("supplier.html", pageName="supplier", supplierList=merged)
 
 # -----------------------------------
 # Ajax: 등록
@@ -180,23 +217,11 @@ def getSupplier(seq: int):
   if not s:
     return jsonify({"code": 40400, "message": "존재하지 않는 공급사입니다."}), 404
 
-  def to_Dict(x: SupplierList) -> dict:
-    return {
-      "seq": x.seq,
-      "companyName": x.companyName or "",
-      "supplierCode": x.supplierCode or "",
-      "supplierID": x.supplierID or "",
-      "supplierPW": "",  # 보안상 미노출
-      "supplierURL": x.supplierURL or "",
-      "manager": x.manager or "",
-      "managerRank": x.managerRank or "",
-      "number": x.number or "",
-      "email": x.email or "",
-      "stateCode": getattr(x, "stateCode", "") or "",
-      "updatedAt": x.updatedAt.isoformat() if getattr(x, "updatedAt", None) else None
-    }
-
-  return jsonify({"code": 20000, "item": to_Dict(s)})
+  d = SupplierDetailRepository.findBySupplierSeq(seq)
+  item = _merge_supplier_with_detail(s, d)
+  # 보안상 PW는 숨김
+  item["supplierPW"] = ""
+  return jsonify({"code": 20000, "item": item})
 
 # -----------------------------------
 # Ajax: 수정(낙관적 잠금)
@@ -271,25 +296,11 @@ def updateSupplier():
 @jwt_required()
 def listSuppliers():
   items = SupplierListRepository.findAll()
-
-  def to_Dict(x: SupplierList) -> dict:
-    return {
-      "seq": x.seq,
-      "companyName": x.companyName or "",
-      "supplierCode": x.supplierCode or "",
-      "stateCode": getattr(x, "stateCode", "") or "",
-      "channelId": x.channelId or "",
-      "contractStatus": x.contractStatus or "",
-      "supplierID": x.supplierID or "",
-      "supplierPW": x.supplierPW or "",
-      "supplierURL": x.supplierURL or "",
-      "manager": x.manager or "",
-      "managerRank": x.managerRank or "",
-      "number": x.number or "",
-      "email": x.email or ""
-    }
-
-  return jsonify({"code": 20000, "supplierList": [to_Dict(s) for s in items]})
+  merged = []
+  for s in items:
+    d = SupplierDetailRepository.findBySupplierSeq(s.seq)
+    merged.append(_merge_supplier_with_detail(s, d))
+  return jsonify({"code": 20000, "supplierList": merged})
 
 # -----------------------------------
 # View: 공급사 승인 페이지

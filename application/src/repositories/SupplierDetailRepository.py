@@ -49,3 +49,8 @@ class SupplierDetailRepository:
 
     db.session.commit()
     return d
+
+  @staticmethod
+  def find_by_supplier_seq(supplier_seq: int) -> Optional[SupplierDetail]:
+    # alias for naming consistency
+    return SupplierDetailRepository.findBySupplierSeq(supplier_seq)
