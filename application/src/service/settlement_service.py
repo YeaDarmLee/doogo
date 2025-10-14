@@ -98,6 +98,32 @@ def prev_week_range(today: date) -> Tuple[date, date]:
   start = end - timedelta(days=6)        # 그 주 월요일
   return start, end
 
+def last_day_of_month(d: date) -> date:
+  if d.month == 12:
+    return date(d.year, 12, 31)
+  first_next = date(d.year, d.month + 1, 1)
+  return first_next - timedelta(days=1)
+
+def prev_biweekly_range(today: date) -> tuple[date, date]:
+  """
+  격주 정산용 '직전' 반월 구간을 반환.
+  - today가 15일이면: 이번달 1~14일
+  - today가 1일이면: 전월 15일~전월 말일
+  - 그 외 날짜에서 수동 실행 시:
+      * day <= 15  → 전월 15일~전월말
+      * day > 15   → 이번달 1~14일
+  """
+  if today.day == 15:
+    return date(today.year, today.month, 1), date(today.year, today.month, 14)
+  if today.day == 1:
+    prev_month = date(today.year, today.month, 1) - timedelta(days=1)
+    return date(prev_month.year, prev_month.month, 15), last_day_of_month(prev_month)
+  # 수동 실행 대비
+  if today.day <= 15:
+    prev_month = date(today.year, today.month, 1) - timedelta(days=1)
+    return date(prev_month.year, prev_month.month, 15), last_day_of_month(prev_month)
+  else:
+    return date(today.year, today.month, 1), date(today.year, today.month, 14)
 
 # -------------------- 조회 --------------------
 def _count_orders(start: date, end: date, supply_id: Optional[str], *,

@@ -3,11 +3,13 @@
 import os
 from datetime import date, datetime
 from pathlib import Path
+from typing import Tuple, Dict, Any, Optional
 
-from application.src.service.slack_service import upload_file_with_button
+from application.src.service.slack_service import upload_file, upload_file_with_button
 from application.src.service.settlement_service import (
   prev_month_range,
   prev_week_range,
+  prev_biweekly_range
 )
 from application.src.repositories.SupplierListRepository import SupplierListRepository
 from application.src.repositories.SettlementRepository import SettlementRepository
@@ -57,12 +59,20 @@ def run_monthly_settlement(out_dir: str = "/tmp"):
 
     try:
       # 1) 정산 엑셀 생성 및 슬랙 업로드
-      fpath, summary = upload_file_with_button(
-        supply_id=sid,
-        channel=ch,
-        start=start,
-        end=end
-      )
+      if (s.seq in (10, 23)):
+        fpath, summary = upload_file(
+          supply_id=sid,
+          channel=ch,
+          start=start,
+          end=end
+        )
+      else:
+        fpath, summary = upload_file_with_button(
+          supply_id=sid,
+          channel=ch,
+          start=start,
+          end=end
+        )
       
       # 2) 헤더 upsert (슬랙 전송 전: READY)
       header = SettlementRepository.upsert_header(
@@ -126,12 +136,20 @@ def run_weekly_settlement(out_dir: str = "/tmp"):
 
     try:
       # 1) 정산 엑셀 생성 및 슬랙 업로드
-      fpath, summary = upload_file_with_button(
-        supply_id=sid,
-        channel=ch,
-        start=start,
-        end=end
-      )
+      if (s.seq in (10, 23)):
+        fpath, summary = upload_file(
+          supply_id=sid,
+          channel=ch,
+          start=start,
+          end=end
+        )
+      else:
+        fpath, summary = upload_file_with_button(
+          supply_id=sid,
+          channel=ch,
+          start=start,
+          end=end
+        )
 
       # 2) 헤더 upsert (슬랙 전송 전: READY)
       header = SettlementRepository.upsert_header(
@@ -170,3 +188,148 @@ def run_weekly_settlement(out_dir: str = "/tmp"):
 
     except Exception as e:
       print(f"[weekly_settlement] error seq={s.seq} ch={ch} name={name} err={e}")
+
+def run_monthly_settlement_for_seq(
+  supplier_seq: int,
+  start: Optional[date] = None,
+  end: Optional[date] = None,
+  out_dir: str = "/tmp",
+) -> Tuple[bool, Dict[str, Any]]:
+  """
+  특정 공급사(seq)만 전월(또는 지정 기간) 정산을 실행하고 슬랙 발송 + 헤더 upsert까지 수행.
+  반환: (ok, result)
+    - ok=True: result = {"seq":..., "channel":..., "supplier_code":..., "header_id":..., "excel_path":...}
+    - ok=False: result = {"seq":..., "error": "에러메시지"}
+  """
+  out_dir = _ensure_outdir(out_dir)
+  today = date.today()
+  if not start or not end:
+    start, end = prev_month_range(today)
+
+  s = SupplierListRepository.findBySeq(supplier_seq)
+  if not s:
+    return False, {"seq": supplier_seq, "error": "supplier not found"}
+
+  ch = _safe(getattr(s, "channelId", None))
+  sid = _safe(getattr(s, "supplierCode", None))
+  name = _safe(getattr(s, "companyName", None))
+  if not ch or not sid:
+    return False, {"seq": supplier_seq, "error": f"missing channelId/supplierCode (ch={ch}, sid={sid})"}
+
+  try:
+    # 엑셀 생성 + 슬랙 업로드 (반환 형태 항상 (str, dict) 유지)
+    if (s.seq in (10, 23)):
+      fpath, summary = upload_file(supply_id=sid, channel=ch, start=start, end=end)
+    else:
+      fpath, summary = upload_file_with_button(supply_id=sid, channel=ch, start=start, end=end)
+
+    # 헤더 upsert → READY
+    header = SettlementRepository.upsert_header(
+      supplier_seq=s.seq,
+      supplier_code=sid,
+      period_type="M",
+      period_start=start,
+      period_end=end,
+      month=_yyyy_mm(start),
+      gross_amount=int(summary.get("gross_amount", 0) or 0),
+      shipping_amount=int(summary.get("shipping_amount", 0) or 0),
+      commission_rate=float(summary.get("commission_rate", 0.0) or 0.0),
+      commission_amount=int(summary.get("commission_amount", 0) or 0),
+      final_amount=int(summary.get("final_amount", 0) or 0),
+      status="READY",
+      deposit_due_dt=None,
+      sent_at=None,
+      slack_channel_id=ch,
+      slack_file_ts=None,
+      excel_file_path=fpath,
+    )
+
+    # 상태 SENT로 업데이트 (파일 TS를 리턴받게 바꾸면 반영)
+    SettlementRepository.update_status(
+      header.id,
+      status="SENT",
+      sent_at=datetime.now(),
+      slack_channel_id=ch,
+      excel_file_path=fpath,
+    )
+
+    print(f"[monthly_settlement:single] upload_ok seq={s.seq} channel={ch} company={name}")
+    return True, {
+      "seq": s.seq,
+      "channel": ch,
+      "supplier_code": sid,
+      "company": name,
+      "header_id": header.id,
+      "excel_path": fpath,
+    }
+
+  except Exception as e:
+    return False, {"seq": s.seq, "error": str(e)}
+
+def run_biweekly_settlement(out_dir: str = "/tmp"):
+  """
+  격주 정산 배치:
+  - today=15일 → (이번달 1~14일)
+  - today=1일  → (전월 15일~전월 말일)
+  - settlementPeriod == '2W' 대상 처리
+  """
+  out_dir = _ensure_outdir(out_dir)
+  today = date.today()
+  start, end = prev_biweekly_range(today)
+  print(f"[biweekly_settlement] period={start}~{end}")
+
+  suppliers = SupplierListRepository.find_by_settlement_period("2W", limit=500)
+  print(f"[biweekly_settlement] suppliers={len(suppliers)}")
+
+  for s in suppliers:
+    ch = _safe(getattr(s, "channelId", None))
+    sid = _safe(getattr(s, "supplierCode", None))
+    name = _safe(getattr(s, "companyName", None))
+    if not ch or not sid:
+      print(f"[biweekly_settlement] skip seq={s.seq} ch={ch} sid={sid} name={name}")
+      continue
+
+    try:
+      # 1) 엑셀 생성 & 슬랙 업로드
+      if (s.seq in (10, 23)):
+        fpath, summary = upload_file(
+          supply_id=sid, channel=ch, start=start, end=end
+        )
+      else:
+        fpath, summary = upload_file_with_button(
+          supply_id=sid, channel=ch, start=start, end=end
+        )
+
+      # 2) 헤더 upsert (READY)
+      header = SettlementRepository.upsert_header(
+        supplier_seq=s.seq,
+        supplier_code=sid,
+        period_type="2W",                 # ⬅ 격주 코드
+        period_start=start,
+        period_end=end,
+        month=start.strftime("%Y-%m"),    # 조회 월 표기(리포트 정렬용)
+        gross_amount=int(summary.get("gross_amount", 0) or 0),
+        shipping_amount=int(summary.get("shipping_amount", 0) or 0),
+        commission_rate=float(summary.get("commission_rate", 0.0) or 0.0),
+        commission_amount=int(summary.get("commission_amount", 0) or 0),
+        final_amount=int(summary.get("final_amount", 0) or 0),
+        status="READY",
+        deposit_due_dt=today,             # 페이 실행일(1일/15일)로 저장
+        sent_at=None,
+        slack_channel_id=ch,
+        slack_file_ts=None,
+        excel_file_path=fpath,
+      )
+
+      # 3) 상태 SENT 업데이트
+      SettlementRepository.update_status(
+        header.id,
+        status="SENT",
+        sent_at=datetime.now(),
+        slack_channel_id=ch,
+        excel_file_path=fpath,
+      )
+      print(f"[biweekly_settlement] upload_ok channel={ch} company={name}")
+
+    except Exception as e:
+      print(f"[biweekly_settlement] error seq={s.seq} ch={ch} name={name} err={e}")

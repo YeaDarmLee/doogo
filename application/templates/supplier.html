@@ -1,4 +1,3 @@
-<!-- header -->
 {% include './common/header.html' %}
 <style>
   .no-hover {
@@ -9,7 +8,7 @@
 <script>
   /**
    * ===========================================
-   *  공통 유틸 (이스케이프/검증/디바운스/직렬화)
+   *  공통 유틸/상수
    * ===========================================
    */
   const STATE_CODE_MAP = {
@@ -38,25 +37,20 @@
       .replaceAll("'", '&#39;');
   }
 
-  // 계약상태 셀 생성: E면 버튼, 아니면 상태 텍스트
-  function renderContractCell(s) {
-    if (s.contractStatus === 'E') {
-      return (
-        `<button class="btn btn-sm btn-warning ml-1 btn-resend" ` +
-        `data-seq="${s.seq}" title="계약서 재발송">계약서 재발송</button>`
-      );
-    } else if (s.contractStatus === 'S' || s.contractStatus === 'SS') {
-      return (
-        `<div class="btn-sm btn-info no-hover">${STATE_CONTRACT_CODE_MAP[s.contractStatus] || ''}</div>`
-      )
-    } else if (s.contractStatus === 'P' || s.contractStatus === 'A') {
-      return (
-        `<div class="btn-sm btn-primary no-hover">${STATE_CONTRACT_CODE_MAP[s.contractStatus] || ''}</div>`
-      )
-    }
-    return STATE_CONTRACT_CODE_MAP[s.contractStatus] || '';
+  // 숫자/정수 검사
+  function isNumber(val) { return !isNaN(val) && val !== '' && isFinite(Number(val)); }
+  function isInteger(val) { return /^\d+$/.test(String(val)); }
+
+  // 사업자번호(10자리) 검증/표시 포맷
+  function isBiz10(val) { return String(val || '').replace(/\D/g, '').length === 10; }
+  function formatBizNo(bizno) {
+    if (!bizno) return '';
+    const d = String(bizno).replace(/\D/g, '');
+    if (d.length !== 10) return bizno;
+    return d.replace(/(\d{3})(\d{2})(\d{5})/, '$1-$2-$3');
   }
 
+  // 상태/계약상태 렌더
   function renderStateBadge(code) {
     const label = escapeHtml(STATE_CODE_MAP[code] || '');
     if (code === 'E') return `<div class="btn-sm btn-danger no-hover">${label}</div>`;
@@ -64,8 +58,27 @@
     if (code === 'I') return `<div class="btn-sm btn-warning no-hover">${label}</div>`;
     return `<div class="btn-sm btn-info no-hover">${label}</div>`;
   }
+  function renderContractCell(s) {
+    if (s.contractStatus === 'E') {
+      return `<button class="btn btn-sm btn-warning ml-1 btn-resend" data-seq="${s.seq}" title="계약서 재발송">계약서 재발송</button>`;
+    } else if (s.contractStatus === 'S' || s.contractStatus === 'SS') {
+      return `<div class="btn-sm btn-info no-hover">${STATE_CONTRACT_CODE_MAP[s.contractStatus] || ''}</div>`;
+    } else if (s.contractStatus === 'P' || s.contractStatus === 'A') {
+      return `<div class="btn-sm btn-primary no-hover">${STATE_CONTRACT_CODE_MAP[s.contractStatus] || ''}</div>`;
+    }
+    return STATE_CONTRACT_CODE_MAP[s.contractStatus] || '';
+  }
 
-  // FormData → 객체 (문자열은 trim)
+  // 디바운스
+  function debounce(fn, wait) {
+    let t;
+    return function(...args) {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), wait);
+    };
+  }
+
+  // FormData → 객체
   function formToObject(formEl) {
     const fd = new FormData(formEl);
     const obj = {};
@@ -75,78 +88,44 @@
     return obj;
   }
 
-  // 디바운스(입력 중 과도한 검증 방지)
-  function debounce(fn, wait) {
-    let t;
-    return function(...args) {
-      clearTimeout(t);
-      t = setTimeout(() => fn.apply(this, args), wait);
-    };
-  }
-
   /**
    * ===========================================
-   *  프런트 유효성 검증
-   *  - 등록/수정 공통 룰
-   *  - 성공 시 초록 테두리만 (문구 없음)
+   *  유효성 규칙
    * ===========================================
    */
-
-  // 필드별 제약 (DB/정책에 맞춰 조정)
-  // - supplierID: 자유형식 + 최소 6자
-  // - supplierEmail: 30자 제한
   const VALIDATION_RULES = {
-    supplierCompanyName: { required: true, max: 20 },   // VARCHAR(20)
-    supplierCode:        { required: true, max: 20 },   // VARCHAR(20)
-    supplierID:          { required: true, minLen: 6 }, // 자유형식 + 최소 6자
-    supplierPW:          { required: false, max: 100 }, // VARCHAR(100)
-    supplierURL:         { required: false, url: true, max: 100 }, // VARCHAR(100)
-    supplierManager:     { required: false, max: 10 },  // VARCHAR(10)
-    supplierManagerRank: { required: false, max: 500 }, // VARCHAR(500)
-    supplierNumber:      { required: false },           // TEXT
-    supplierEmail:       { required: false, email: true, max: 30 } // VARCHAR(30)
+    supplierCompanyName: { required: true, max: 20 },
+    supplierCode:        { required: true, max: 20 },
+    supplierID:          { required: true, minLen: 6 },
+    supplierPW:          { required: false, max: 100 },
+    supplierURL:         { required: false, url: true, max: 100 },
+    supplierManager:     { required: false, max: 10 },
+    supplierManagerRank: { required: false, max: 500 },
+    supplierNumber:      { required: false },
+    supplierEmail:       { required: false, email: true, max: 30 }
   };
-
-  // 상세 입력 규칙
   const DETAIL_RULES = {
     businessRegistrationNumber: { required: false, biz10: true },
-    bankCode: { required: false }, // 은행 선택을 필수로 하려면 required: true
+    bankCode: { required: false }, // 필수로 바꾸려면 true
     accountNumber: { required: false, max: 30 }
   };
 
-  // 숫자/정수 검사기 보강 (이미 존재)
-  function isNumber(val) { return !isNaN(val) && val !== '' && isFinite(Number(val)); }
-  function isInteger(val) { return /^\d+$/.test(String(val)); }
-
-  // 사업자번호 10자리 검증
-  function isBiz10(val) {
-    const d = String(val || '').replace(/\D/g, '');
-    return d.length === 10;
-  }
-
   // 기본 형식 검증
-  function isValidEmail(val) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
-  }
+  function isValidEmail(val) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val); }
   function isValidURL(val) {
     try {
       const href = /^(https?:)?\/\//i.test(val) ? val : 'http://' + val;
-      new URL(href);
-      return true;
-    } catch (_) {
-      return false;
-    }
+      new URL(href); return true;
+    } catch (_) { return false; }
   }
 
-  // 검증 상태 초기화
+  // 에러/성공 표시
   function clearErrors(formEl) {
     $(formEl).find('.is-invalid').removeClass('is-invalid');
     $(formEl).find('.invalid-feedback').text('');
     $(formEl).find('.is-valid').removeClass('is-valid');
     $(formEl).find('.valid-feedback').text('');
   }
-
-  // 에러 표시
   function showFieldError(inputEl, message) {
     const $el = $(inputEl);
     $el.addClass('is-invalid');
@@ -159,8 +138,6 @@
     $el.removeClass('is-valid');
     $el.siblings('.valid-feedback').text('');
   }
-
-  // 성공 표시(문구 없이 초록 테두리만)
   function showFieldValid(inputEl) {
     const $el = $(inputEl);
     $el.removeClass('is-invalid');
@@ -174,9 +151,9 @@
     vf.text('');
   }
 
-  // 단일 필드 검증 (등록 폼용 키 사용)
+  // 단일 필드 검증 (등록 폼 name 기준 + 상세 필드 포함)
   function validateField(formEl, name) {
-    const rules = VALIDATION_RULES[name];
+    const rules = VALIDATION_RULES[name] || DETAIL_RULES[name];
     if (!rules) return { ok: true };
 
     const inputEl = $(formEl).find(`[name="${name}"]`)[0];
@@ -207,27 +184,48 @@
       showFieldError(inputEl, '올바른 URL 형식이 아닙니다.');
       return { ok: false };
     }
-    const rules = VALIDATION_RULES[name] || DETAIL_RULES[name];  // ★ 여기 추가
-    if (!rules) return { ok: true };
-    if (rules.biz10 && !isBiz10(raw)) {          // ★ 사업자번호 10자리
+    if (rules.biz10 && !isBiz10(raw)) {
       showFieldError(inputEl, '사업자등록번호는 숫자 10자리여야 합니다.');
       return { ok: false };
     }
-
     showFieldValid(inputEl);
     return { ok: true };
   }
 
-  // 전체 폼 검증 (등록 폼 기준 키 사용)
+  // 전체 폼 검증(등록)
   function validateForm(formEl) {
     clearErrors(formEl);
-    const rules = VALIDATION_RULES;
-    const errors = {};
-    Object.keys(rules).forEach((key) => {
-      const res = validateField(formEl, key);
-      if (!res.ok) errors[key] = true;
-    });
-    return { ok: Object.keys(errors).length === 0, errors };
+    const keys = [
+      ...Object.keys(VALIDATION_RULES),
+      ...Object.keys(DETAIL_RULES)
+    ];
+    let ok = true;
+    keys.forEach((k) => { if (!validateField(formEl, k).ok) ok = false; });
+
+    // 계약 템플릿 조건부 검증
+    const t = $('#contractTemplate').val();
+    if (t === 'A') {
+      const p = $('#contractPercent').val();
+      if (!(p !== '' && isNumber(p) && Number(p) >= 0 && Number(p) <= 100)) {
+        showFieldError($('#contractPercent'), '0~100 사이의 수수료(%)를 입력해 주세요.');
+        ok = false;
+      }
+    }
+    if (t === 'B') {
+      const th = $('#contractThreshold').val();
+      const under = $('#contractPercentUnder').val();
+      const over = $('#contractPercentOver').val();
+      if (!(th !== '' && isInteger(th) && Number(th) >= 0)) {
+        showFieldError($('#contractThreshold'), '0 이상의 금액을 입력해 주세요.'); ok = false;
+      }
+      if (!(under !== '' && isNumber(under) && Number(under) >= 0 && Number(under) <= 100)) {
+        showFieldError($('#contractPercentUnder'), '0~100 사이의 수수료(%)를 입력해 주세요.'); ok = false;
+      }
+      if (!(over !== '' && isNumber(over) && Number(over) >= 0 && Number(over) <= 100)) {
+        showFieldError($('#contractPercentOver'), '0~100 사이의 수수료(%)를 입력해 주세요.'); ok = false;
+      }
+    }
+    return { ok };
   }
 
   /**
@@ -235,40 +233,53 @@
    *  등록 폼: 리셋/라이브검증/제출
    * ===========================================
    */
-
-  // 등록 폼 리셋
   function resetForm() {
-    // 입력값 리셋
+    // 기본
     $('#supplierCompanyName,#supplierCode,#supplierID,#supplierPW,#supplierURL,#supplierManager,#supplierManagerRank,#supplierNumber,#supplierEmail').val('');
-    // 계약 필드 리셋/토글
+    // 계약
     $('#contractTemplate').val('');
     $('#contractPercent,#contractThreshold,#contractPercentUnder,#contractPercentOver').val('');
     $('#contractSkip').prop('checked', false);
-    if (typeof toggleContractFields === 'function') toggleContractFields();
-    // 검증 상태 초기화
+    toggleContractFields();
+    // 상세
+    $('#businessRegistrationNumber').val('');
+    $('#bankCode').val('');
+    $('#accountNumber').val('');
+    // 검증 제거
     clearErrors(document.getElementById('supplierForm'));
   }
+
+  // 계약 토글(등록)
+  function toggleContractFields() {
+    const t = $('#contractTemplate').val();
+    $('#contractAFields').toggleClass('d-none', t !== 'A');
+    $('#contractBFields').toggleClass('d-none', t !== 'B');
+  }
+  $(document).on('change', '#contractTemplate', toggleContractFields);
+
+  // 등록 폼 라이브 검증
+  const liveValidateAdd = debounce(function(e) {
+    const form = document.getElementById('supplierForm');
+    const name = e.target.name;
+    if (!name) return;
+    validateField(form, name);
+  }, 120);
+  $(document).on('input change', '#supplierForm input, #supplierForm select', liveValidateAdd);
 
   // 등록 제출
   function addSupplier() {
     const form = document.getElementById('supplierForm');
     const { ok } = validateForm(form);
     if (!ok) {
-      Swal.fire({
-        icon: 'error',
-        title: '입력값 확인 필요',
-        text: '빨간 표시된 항목을 수정해 주세요.'
-      });
+      Swal.fire({ icon: 'error', title: '입력값 확인 필요', text: '빨간 표시된 항목을 수정해 주세요.' });
       return;
     }
 
     Swal.fire({
       title: '공급사를 등록하시겠습니까?',
-      text: "공급사 등록 후 Slack 생성 프로세스가 바로 실행됩니다.",
+      text: '등록 후 Slack 생성 프로세스가 실행됩니다.',
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: '#3085d6',
-      cancelButtonColor: '#d33',
       confirmButtonText: '등록',
       cancelButtonText: '취소',
       reverseButtons: true
@@ -281,54 +292,48 @@
         url: '/supplier/ajax/addSupplier',
         data: fd,
         dataType: 'json',
-        processData: false,  // FormData 전송 필수
-        contentType: false,  // 브라우저가 멀티파트 헤더 자동 지정
-        cache: false,
-        success: function (res) {
-          if (res.code === 20000) {
-            alertStartHtml('success', '공급사 등록 완료', '공급사 등록이 완료되었습니다.<br>Slack 생성 프로세스가 시작됩니다.')
-            .then(function () {
-              $('#addSupplierClose').click(); // 모달 닫기
-              location.reload();
-            });
-          } else {
-            alertStart('error', '공급사 등록 실패', '공급사 등록에 실패하였습니다.');
-          }
-        },
-        error: function () {
-          alertStart('error', '공급사 등록 실패', '공급사 등록에 실패하였습니다.');
+        processData: false,
+        contentType: false,
+        cache: false
+      }).done(function(res) {
+        if (res.code === 20000) {
+          alertStartHtml('success', '공급사 등록 완료', '공급사 등록이 완료되었습니다.<br>Slack 생성 프로세스가 시작됩니다.')
+          .then(function() {
+            $('#addSupplierClose').click();
+            location.reload();
+          });
+        } else {
+          alertStart('error', '공급사 등록 실패', res.message || '등록 처리에 실패했습니다.');
         }
+      }).fail(function(xhr) {
+        const r = xhr.responseJSON || {};
+        alertStart('error', '공급사 등록 실패', r.message || '등록 처리에 실패했습니다.');
       });
     });
   }
 
-  // 등록 폼 라이브 검증
-  const liveValidateAdd = debounce(function(e) {
-    const form = document.getElementById('supplierForm');
-    const name = e.target.name;
-    if (!name) return;
-    validateField(form, name);
-  }, 150);
-  $(document).on('input change', '#supplierForm input', liveValidateAdd);
-
   /**
    * ===========================================
-   *  수정: 모달 프리필/라이브검증/저장
+   *  수정: 프리필/검증/저장
    * ===========================================
    */
-
-  // 수정 버튼 클릭 핸들러 (이벤트 위임)
+  // 수정 버튼
   $(document).on('click', '.btn-edit', function (e) {
     e.preventDefault();
     const seq = $(this).data('seq');
-    if (!seq) {
-      console.warn('수정 버튼에 data-seq가 없습니다.');
-      return;
-    }
+    if (!seq) return;
     openEditModal(seq);
   });
 
-  // 수정 모달 열기 → 단건 조회 → 프리필
+  // 계약 토글(수정)
+  function toggleContractFieldsEdit() {
+    const t = $('#editContractTemplate').val();
+    $('#editContractAFields').toggleClass('d-none', t !== 'A');
+    $('#editContractBFields').toggleClass('d-none', t !== 'B');
+  }
+  $(document).on('change', '#editContractTemplate', toggleContractFieldsEdit);
+
+  // 수정 모달 오픈 & 프리필
   function openEditModal(seq) {
     $.getJSON(`/supplier/ajax/${seq}`, function(res) {
       if (res.code !== 20000) {
@@ -336,19 +341,36 @@
         return;
       }
       const f = document.getElementById('editSupplierForm');
-      // 값 주입 (PW는 보안상 비표시/공란 유지)
-      f.seq.value = res.item.seq;
-      f.updatedAt.value = res.item.updatedAt || '';
-      f.companyName.value = res.item.companyName || '';
-      f.supplierCode.value = res.item.supplierCode || '';
-      f.supplierID.value = res.item.supplierID || '';
-      f.supplierPW.value = '';
-      f.supplierURL.value = res.item.supplierURL || '';
-      f.manager.value = res.item.manager || '';
-      f.managerRank.value = res.item.managerRank || '';
-      f.number.value = res.item.number || '';
-      f.email.value = res.item.email || '';
+      const it = res.item || {};
+      const d = it.detail || {};
 
+      // 기본
+      f.seq.value = it.seq;
+      f.updatedAt.value = it.updatedAt || '';
+      f.companyName.value = it.companyName || '';
+      f.supplierCode.value = it.supplierCode || '';
+      f.supplierID.value = it.supplierID || '';
+      f.supplierPW.value = ''; // 보안상 공란 유지
+      f.supplierURL.value = it.supplierURL || '';
+      f.manager.value = it.manager || '';
+      f.managerRank.value = it.managerRank || '';
+      f.number.value = it.number || '';
+      f.email.value = it.email || '';
+
+      // 상세
+      f.businessRegistrationNumber.value = d.businessRegistrationNumber || '';
+      $(f.bankCode).val(d.bankCode || '');
+      f.accountNumber.value = d.accountNumber || '';
+
+      // 계약
+      $('#editContractTemplate').val(it.contractTemplate || '');
+      $('#editContractPercent').val(it.contractPercent ?? '');
+      $('#editContractThreshold').val(it.contractThreshold ?? '');
+      $('#editContractPercentUnder').val(it.contractPercentUnder ?? '');
+      $('#editContractPercentOver').val(it.contractPercentOver ?? '');
+      $('#editContractSkip').prop('checked', String(it.contractSkip || '0') === '1');
+
+      toggleContractFieldsEdit();
       clearErrors(f);
       $('#editSupplier').modal('show');
     }).fail(() => {
@@ -356,13 +378,13 @@
     });
   }
 
-  // 수정 폼 라이브 검증 (수정 폼 name ↔ 등록 룰 키 매핑)
+  // 수정 폼 라이브 검증 (등록 룰 매핑)
   const liveValidateEdit = debounce(function(e) {
     const f = document.getElementById('editSupplierForm');
     const name = e.target.name;
     if (!name) return;
 
-    const map = {
+    const bridge = {
       companyName: 'supplierCompanyName',
       supplierCode: 'supplierCode',
       supplierID: 'supplierID',
@@ -371,90 +393,59 @@
       manager: 'supplierManager',
       managerRank: 'supplierManagerRank',
       number: 'supplierNumber',
-      email: 'supplierEmail'
+      email: 'supplierEmail',
+      businessRegistrationNumber: 'businessRegistrationNumber',
+      bankCode: 'bankCode',
+      accountNumber: 'accountNumber'
     };
-    const ruleKey = map[name];
-    const rules = VALIDATION_RULES[ruleKey];
-    if (!rules) return;
+    const key = bridge[name] || name;
+    const formKeyRules = VALIDATION_RULES[key] || DETAIL_RULES[key];
+    if (!formKeyRules) return;
 
     const inputEl = $(f).find(`[name="${name}"]`)[0];
     const raw = (inputEl && inputEl.value ? inputEl.value.trim() : '');
 
-    if (rules.required && !raw && name !== 'supplierPW') {
-      showFieldError(inputEl, '필수 입력 항목입니다.'); return;
-    }
+    if (formKeyRules.required && !raw && name !== 'supplierPW') { showFieldError(inputEl, '필수 입력 항목입니다.'); return; }
     if (!raw) { $(inputEl).removeClass('is-invalid is-valid'); return; }
-    if (rules.max && raw.length > rules.max) {
-      showFieldError(inputEl, `최대 ${rules.max}자까지 가능합니다. (현재 ${raw.length}자)`); return;
-    }
-    if (rules.minLen && raw.length < rules.minLen) {
-      showFieldError(inputEl, `최소 ${rules.minLen}자 이상 입력해 주세요.`); return;
-    }
-    if (rules.email && !isValidEmail(raw)) {
-      showFieldError(inputEl, '올바른 이메일 형식이 아닙니다.'); return;
-    }
-    if (rules.url && !isValidURL(raw)) {
-      showFieldError(inputEl, '올바른 URL 형식이 아닙니다.'); return;
-    }
+    if (formKeyRules.max && raw.length > formKeyRules.max) { showFieldError(inputEl, `최대 ${formKeyRules.max}자까지 가능합니다. (현재 ${raw.length}자)`); return; }
+    if (formKeyRules.minLen && raw.length < formKeyRules.minLen) { showFieldError(inputEl, `최소 ${formKeyRules.minLen}자 이상 입력해 주세요.`); return; }
+    if (formKeyRules.email && !isValidEmail(raw)) { showFieldError(inputEl, '올바른 이메일 형식이 아닙니다.'); return; }
+    if (formKeyRules.url && !isValidURL(raw)) { showFieldError(inputEl, '올바른 URL 형식이 아닙니다.'); return; }
+    if (formKeyRules.biz10 && !isBiz10(raw)) { showFieldError(inputEl, '사업자등록번호는 숫자 10자리여야 합니다.'); return; }
     showFieldValid(inputEl);
-  }, 150);
-  $(document).on('input change', '#editSupplierForm input', liveValidateEdit);
+  }, 120);
+  $(document).on('input change', '#editSupplierForm input, #editSupplierForm select', liveValidateEdit);
 
   // 수정 저장
   function saveEditSupplier() {
     const f = document.getElementById('editSupplierForm');
+    clearErrors(f);
 
-    // 수정 폼 검증 (등록 룰을 매핑하여 적용)
-    const ok = (function validateEdit() {
-      clearErrors(f);
-      const names = [
-        'companyName', 'supplierCode', 'supplierID', 'supplierPW',
-        'supplierURL', 'manager', 'managerRank', 'number', 'email'
-      ];
-      const bridge = {
-        companyName: 'supplierCompanyName',
-        supplierCode: 'supplierCode',
-        supplierID: 'supplierID',
-        supplierPW: 'supplierPW',
-        supplierURL: 'supplierURL',
-        manager: 'supplierManager',
-        managerRank: 'supplierManagerRank',
-        number: 'supplierNumber',
-        email: 'supplierEmail'
-      };
-      let valid = true;
-      names.forEach(n => {
-        const rules = VALIDATION_RULES[bridge[n]];
-        if (!rules) return;
-        const inputEl = $(f).find(`[name="${n}"]`)[0];
-        const raw = (inputEl && inputEl.value ? inputEl.value.trim() : '');
+    // 필수/형식 체크
+    let ok = true;
+    if (!f.companyName.value.trim()) { showFieldError(f.companyName, '필수 입력 항목입니다.'); ok = false; }
+    if (!f.supplierID.value.trim() || f.supplierID.value.trim().length < 6) { showFieldError(f.supplierID, 'ID는 6자 이상 입력해 주세요.'); ok = false; }
 
-        if (rules.required && !raw && n !== 'supplierPW') {
-          showFieldError(inputEl, '필수 입력 항목입니다.');
-          valid = false; return;
-        }
-        if (!raw) { $(inputEl).removeClass('is-invalid is-valid'); return; }
-        if (rules.max && raw.length > rules.max) {
-          showFieldError(inputEl, `최대 ${rules.max}자까지 가능합니다. (현재 ${raw.length}자)`);
-          valid = false; return;
-        }
-        if (rules.minLen && raw.length < rules.minLen) {
-          showFieldError(inputEl, `최소 ${rules.minLen}자 이상 입력해 주세요.`);
-          valid = false; return;
-        }
-        if (rules.email && !isValidEmail(raw)) {
-          showFieldError(inputEl, '올바른 이메일 형식이 아닙니다.');
-          valid = false; return;
-        }
-        if (rules.url && !isValidURL(raw)) {
-          showFieldError(inputEl, '올바른 URL 형식이 아닙니다.');
-          valid = false; return;
-        }
-        showFieldValid(inputEl);
-      });
-      return valid;
-    })();
+    // 계약 체크
+    const t = $('#editContractTemplate').val();
+    if (t === 'A') {
+      const p = $('#editContractPercent').val();
+      if (!(p !== '' && isNumber(p) && Number(p) >= 0 && Number(p) <= 100)) {
+        showFieldError($('#editContractPercent'), '0~100 사이의 수수료(%)를 입력해 주세요.'); ok = false;
+      }
+    }
+    if (t === 'B') {
+      const th = $('#editContractThreshold').val();
+      const under = $('#editContractPercentUnder').val();
+      const over = $('#editContractPercentOver').val();
+      if (!(th !== '' && isInteger(th) && Number(th) >= 0)) { showFieldError($('#editContractThreshold'), '0 이상의 금액을 입력해 주세요.'); ok = false; }
+      if (!(under !== '' && isNumber(under) && Number(under) >= 0 && Number(under) <= 100)) { showFieldError($('#editContractPercentUnder'), '0~100 사이의 수수료(%)를 입력해 주세요.'); ok = false; }
+      if (!(over !== '' && isNumber(over) && Number(over) >= 0 && Number(over) <= 100)) { showFieldError($('#editContractPercentOver'), '0~100 사이의 수수료(%)를 입력해 주세요.'); ok = false; }
+    }
 
+    // 상세 체크(선택이지만 형식 보정)
+    const biz = f.businessRegistrationNumber.value;
+    if (biz && !isBiz10(biz)) { showFieldError(f.businessRegistrationNumber, '사업자등록번호는 숫자 10자리여야 합니다.'); ok = false; }
     if (!ok) {
       Swal.fire({ icon: 'error', title: '입력값 확인 필요', text: '빨간 표시된 항목을 수정해 주세요.' });
       return;
@@ -462,7 +453,7 @@
 
     const payload = {
       seq: f.seq.value,
-      updatedAt: f.updatedAt.value, // 낙관적 잠금
+      updatedAt: f.updatedAt.value,
       companyName: f.companyName.value.trim(),
       supplierCode: f.supplierCode.value.trim(),
       supplierID: f.supplierID.value.trim(),
@@ -471,7 +462,18 @@
       manager: f.manager.value.trim(),
       managerRank: f.managerRank.value.trim(),
       number: f.number.value.trim(),
-      email: f.email.value.trim()
+      email: f.email.value.trim(),
+      // 상세
+      businessRegistrationNumber: biz,
+      bankCode: f.bankCode.value,
+      accountNumber: f.accountNumber.value.trim(),
+      // 계약
+      contractTemplate: t,
+      contractPercent: $('#editContractPercent').val(),
+      contractThreshold: $('#editContractThreshold').val(),
+      contractPercentUnder: $('#editContractPercentUnder').val(),
+      contractPercentOver: $('#editContractPercentOver').val(),
+      contractSkip: $('#editContractSkip').is(':checked') ? '1' : '0'
     };
 
     $.ajax({
@@ -479,56 +481,28 @@
       method: 'POST',
       contentType: 'application/json',
       dataType: 'json',
-      data: JSON.stringify(payload),
-      success: function(res) {
-        if (res.code === 20000) {
-          alertStart('success', '수정 완료', '공급사 정보가 수정되었습니다.')
-          .then(function () {
-            $('#editSupplier').modal('hide');
-            location.reload();
-          })
-        } else if (res.code === 40900) {
-          alertStart('warning', '동시 수정 감지', '다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요.');
-        } else if (res.code === 40001) {
-          alertStart('error', '검증 실패', '입력값을 확인해 주세요.');
-        } else {
-          alertStart('error', '수정 실패', '공급사 정보 수정에 실패했습니다.');
-        }
-      },
-      error: function() {
-        alertStart('error', '수정 실패', '공급사 정보 수정에 실패했습니다.');
+      data: JSON.stringify(payload)
+    }).done(function(res) {
+      if (res.code === 20000) {
+        alertStart('success', '수정 완료', '공급사 정보가 저장되었습니다.')
+        .then(function () {
+          $('#editSupplier').modal('hide');
+          location.reload();
+        });
+      } else if (res.code === 40900) {
+        alertStart('warning', '동시 수정 감지', res.message || '다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요.');
+      } else if (res.code === 40001) {
+        alertStart('error', '검증 실패', '입력값을 확인해 주세요.');
+      } else {
+        alertStart('error', '저장 실패', res.message || '예기치 못한 오류가 발생했습니다.');
       }
+    }).fail(function(xhr) {
+      const r = xhr.responseJSON || {};
+      alertStart('error', '저장 실패', r.message || '예기치 못한 오류가 발생했습니다.');
     });
   }
 
-  // 페이지 로드시 필요 시 초기 동기화
-  $(function() {
-  });
-
-  // ▼ 유효성 규칙 확장
-  const CONTRACT_RULES = {
-    A: {
-      contractPercent: { required: true, number: true, min: 0, max: 100 }
-    },
-    B: {
-      contractThreshold:    { required: true, integer: true, min: 0 },
-      contractPercentUnder: { required: true, number: true,  min: 0, max: 100 },
-      contractPercentOver:  { required: true, number: true,  min: 0, max: 100 }
-    }
-  };
-
-  // ▼ 숫자/정수 검사기 보강
-  function isNumber(val) { return !isNaN(val) && val !== '' && isFinite(Number(val)); }
-  function isInteger(val) { return /^\d+$/.test(String(val)); }
-
-  // ▼ 계약서 유형 토글
-  function toggleContractFields() {
-    const t = $('#contractTemplate').val();
-    $('#contractAFields').toggleClass('d-none', t !== 'A');
-    $('#contractBFields').toggleClass('d-none', t !== 'B');
-  }
-  $(document).on('change', '#contractTemplate', toggleContractFields);
-
+  // 계약서 재발송
   $(document).on('click', '.btn-resend', function (e) {
     e.preventDefault();
     const seq = $(this).data('seq');
@@ -550,13 +524,11 @@
         method: 'POST',
         contentType: 'application/json',
         dataType: 'json',
-        data: JSON.stringify({ seq }),
+        data: JSON.stringify({ seq })
       }).done((r) => {
         if (r.code === 20000) {
           alertStart('success', '재발송 요청 완료', '계약서 재발송이 요청되었습니다.')
-          .then(function () {
-            location.reload();
-          });
+          .then(function () { location.reload(); });
         } else {
           alertStart('error', '재발송 실패', r.message || '계약서 재발송 처리에 실패했습니다.');
         }
@@ -565,45 +537,35 @@
       });
     });
   });
+
+  // 페이지 로드 훅(필요 시)
+  $(function(){});
 </script>
 
 <body id="page-top">
-
-  <!-- Page Wrapper -->
   <div id="wrapper">
-
-    <!-- Sidebar -->
     {% include './common/sidebar.html' %}
-    <!-- End of Sidebar -->
 
-    <!-- Content Wrapper -->
     <div id="content-wrapper" class="d-flex flex-column">
-
-      <!-- Main Content -->
       <div id="content">
-
-        <!-- Begin Page Content -->
         <div class="container-fluid">
 
-          <!-- Page Heading -->
           <h1 class="h3 mb-2 text-gray-800">공급사 관리</h1>
           <p class="mb-4">
             공급사 등록, 수정 및 계약서 관리 기능을 제공합니다.<br>
-            신규 공급사를 등록하면 Slack 채널이 자동 생성되고, 계약 진행 상태를 실시간으로 확인할 수 있습니다.
+            신규 공급사를 등록하면 Slack 채널이 자동 생성되고, 계약 진행 상태를 확인할 수 있습니다.
           </p>
 
-          <!-- DataTales Example -->
-          <div class="card shadow mb-4" style="zoom: 0.9;">
+          <div class="card shadow mb-4" style="zoom:0.9;">
             <div class="card-header py-3 d-sm-flex align-items-center justify-content-between">
               <h6 class="m-0 font-weight-bold text-primary">공급사 리스트</h6>
-              <!-- 등록 모달 열기: resetForm으로 값/상태 초기화 후 오픈 -->
               <a class="d-sm-inline-block btn btn-sm btn-primary shadow-sm"
                  href="javascript:resetForm()"
                  data-toggle="modal" data-target="#addSupplier">공급사 등록</a>
             </div>
+
             <div class="card-body">
               <div class="table-responsive">
-                <!-- DataTables 사용 시 id 유지 -->
                 <table class="table table-bordered text-center" id="dataTable" width="100%" cellspacing="0">
                   <thead>
                     <tr>
@@ -629,37 +591,30 @@
                         <td>{{ loop.index }}</td>
                         <td>{{ supplier.companyName }}</td>
                         <td>{{ supplier.detail.businessRegistrationNumber | bizno_format }}</td>
-                        <td>
-                          <div class="btn-sm btn-secondary no-hover">{{ supplier.supplierCode }}</div>
-                        </td>
+                        <td><div class="btn-sm btn-secondary no-hover">{{ supplier.supplierCode }}</div></td>
                         <td>
                           {% if supplier.stateCode == 'E' %}
                           <div class="btn-sm btn-danger no-hover">{{ supplier.stateCode | state_text }}</div>
-                          {% endif %}
-                          {% if supplier.stateCode == 'P' %}
+                          {% elif supplier.stateCode == 'P' %}
                           <div class="btn-sm btn-primary no-hover">{{ supplier.stateCode | state_text }}</div>
-                          {% endif %}
-                          {% if supplier.stateCode == 'I' %}
+                          {% elif supplier.stateCode == 'I' %}
                           <div class="btn-sm btn-warning no-hover">{{ supplier.stateCode | state_text }}</div>
-                          {% endif %}
-                          {% if supplier.stateCode != 'E' %}
+                          {% else %}
                           <div class="btn-sm btn-info no-hover">{{ supplier.stateCode | state_text }}</div>
                           {% endif %}
                         </td>
                         <td>
                           {% if supplier.contractStatus in ['SS', 'S'] %}
                             <div class="btn-sm btn-info no-hover">{{ supplier.contractStatus | contractState_text }}</div>
-                          {% endif %}
-                          {% if supplier.contractStatus in ['P', 'A'] %}
+                          {% elif supplier.contractStatus in ['P', 'A'] %}
                             <div class="btn-sm btn-primary no-hover">{{ supplier.contractStatus | contractState_text }}</div>
-                          {% endif %}
-                          {% if supplier.contractStatus == 'E' %}
-                            <button
-                              class="btn btn-sm btn-warning ml-1 btn-resend"
-                              data-seq="{{ supplier.seq }}"
-                              title="계약서 재발송">
+                          {% elif supplier.contractStatus == 'E' %}
+                            <button class="btn btn-sm btn-warning ml-1 btn-resend"
+                                    data-seq="{{ supplier.seq }}" title="계약서 재발송">
                               계약서 재발송
                             </button>
+                          {% else %}
+                            {{ supplier.contractStatus | contractState_text }}
                           {% endif %}
                         </td>
                         <td>{{ supplier.supplierID }}</td>
@@ -670,7 +625,6 @@
                         <td>{{ supplier.detail.bankCode | bankState_text }}</td>
                         <td>{{ supplier.detail.accountNumber }}</td>
                         <td>
-                          <!-- ✅ 수정 버튼에 클래스/식별자 부착 -->
                           <a href="#"
                              class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit"
                              data-seq="{{ supplier.seq }}">수정</a>
@@ -684,29 +638,18 @@
           </div>
 
         </div>
-        <!-- /.container-fluid -->
-
       </div>
-      <!-- End of Main Content -->
 
-      <!-- Footer -->
       {% include './common/copyright.html' %}
-      <!-- End of Footer -->
-
     </div>
-    <!-- End of Content Wrapper -->
-
   </div>
-  <!-- End of Page Wrapper -->
 
-  <!-- Scroll to Top Button-->
   <a class="scroll-to-top rounded" href="#page-top">
     <i class="fas fa-angle-up"></i>
   </a>
 
   <!-- 등록 모달 -->
-  <div class="modal fade" id="addSupplier" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel"
-       aria-hidden="true">
+  <div class="modal fade" id="addSupplier" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true">
     <div class="modal-dialog" role="document">
       <div class="modal-content">
 
@@ -717,79 +660,44 @@
 
         <div class="modal-body">
           <form class="supplierForm" id="supplierForm" novalidate>
-            <!-- 회사명: 필수, 최대 20자 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierCompanyName" name="supplierCompanyName"
-                     placeholder="회사명" maxlength="20" required>
+              <input type="text" class="form-control form-control-user" id="supplierCompanyName" name="supplierCompanyName" placeholder="회사명" maxlength="20" required>
               <div class="invalid-feedback">회사명은 필수이며 최대 20자입니다.</div>
             </div>
-
-            <!-- Cafe24 코드: 필수, 최대 20자 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierCode" name="supplierCode"
-                     placeholder="CAFE24 코드" maxlength="20" required>
+              <input type="text" class="form-control form-control-user" id="supplierCode" name="supplierCode" placeholder="CAFE24 코드" maxlength="20" required>
               <div class="invalid-feedback">Cafe24 코드는 필수이며 최대 20자입니다.</div>
             </div>
-
-            <!-- 공급사 ID: 자유형식 + 최소 6자 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierID" name="supplierID"
-                     placeholder="공급사 ID(최소 6자)" minlength="6" required>
+              <input type="text" class="form-control form-control-user" id="supplierID" name="supplierID" placeholder="공급사 ID(최소 6자)" minlength="6" required>
               <div class="invalid-feedback">공급사 ID는 최소 6자 이상 입력해 주세요.</div>
             </div>
-
-            <!-- 공급사 PW: 선택, 최대 100자 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierPW" name="supplierPW"
-                     placeholder="공급사 PW" maxlength="100">
+              <input type="text" class="form-control form-control-user" id="supplierPW" name="supplierPW" placeholder="공급사 PW" maxlength="100">
               <div class="invalid-feedback">PW는 최대 100자입니다.</div>
             </div>
-
-            <!-- 자사몰 URL: 선택, 최대 100자 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierURL" name="supplierURL"
-                     placeholder="자사몰 URL" maxlength="100">
+              <input type="text" class="form-control form-control-user" id="supplierURL" name="supplierURL" placeholder="자사몰 URL" maxlength="100">
               <div class="invalid-feedback">올바른 URL 형식이 아닙니다.</div>
             </div>
-
-            <!-- 담당자명: 선택, 최대 10자 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierManager" name="supplierManager"
-                     placeholder="담당자명" maxlength="10">
+              <input type="text" class="form-control form-control-user" id="supplierManager" name="supplierManager" placeholder="담당자명" maxlength="10">
               <div class="invalid-feedback">담당자명은 최대 10자입니다.</div>
             </div>
-
-            <!-- 직책: 선택, 최대 500자 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierManagerRank" name="supplierManagerRank"
-                     placeholder="직책" maxlength="500">
+              <input type="text" class="form-control form-control-user" id="supplierManagerRank" name="supplierManagerRank" placeholder="직책" maxlength="500">
               <div class="invalid-feedback">직책은 최대 500자입니다.</div>
             </div>
-
-            <!-- 연락처: 선택, 자유형식 -->
             <div class="form-group">
-              <input type="text" class="form-control form-control-user"
-                     id="supplierNumber" name="supplierNumber"
-                     placeholder="연락처">
+              <input type="text" class="form-control form-control-user" id="supplierNumber" name="supplierNumber" placeholder="연락처">
               <div class="invalid-feedback">유효한 연락처를 입력해 주세요.</div>
             </div>
-
-            <!-- 이메일: 선택, 최대 30자 -->
             <div class="form-group">
-              <input type="email" class="form-control form-control-user"
-                     id="supplierEmail" name="supplierEmail"
-                     placeholder="이메일" maxlength="30">
+              <input type="email" class="form-control form-control-user" id="supplierEmail" name="supplierEmail" placeholder="이메일" maxlength="30">
               <div class="invalid-feedback">올바른 이메일 형식이 아닙니다.</div>
             </div>
 
-            <!-- 계약서 선택/입력 -->
+            <!-- 계약(등록) -->
             <div class="border-top pt-3 mt-3">
               <div class="form-group">
                 <label class="small text-muted mb-1">계약서 선택</label>
@@ -799,61 +707,39 @@
                   <option value="B">B. 특정금액 기준 구간별 수수료</option>
                 </select>
               </div>
-
-              <!-- A형: 단일 퍼센트 -->
               <div id="contractAFields" class="d-none">
                 <div class="form-group">
-                  <input type="number" step="0.01" min="0" max="100"
-                        class="form-control form-control-user"
-                        id="contractPercent" name="contractPercent"
-                        placeholder="수수료(%)">
+                  <input type="number" step="0.01" min="0" max="100" class="form-control form-control-user" id="contractPercent" name="contractPercent" placeholder="수수료(%)">
                   <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
                 </div>
               </div>
-
-              <!-- B형: 임계금액 + 이하/초과 퍼센트 -->
               <div id="contractBFields" class="d-none">
                 <div class="form-group">
-                  <input type="number" step="1" min="0"
-                        class="form-control form-control-user"
-                        id="contractThreshold" name="contractThreshold"
-                        placeholder="특정 금액(원)">
+                  <input type="number" step="1" min="0" class="form-control form-control-user" id="contractThreshold" name="contractThreshold" placeholder="특정 금액(원)">
                   <div class="invalid-feedback">0 이상의 금액을 입력해 주세요.</div>
                 </div>
                 <div class="form-group">
-                  <input type="number" step="0.01" min="0" max="100"
-                        class="form-control form-control-user"
-                        id="contractPercentUnder" name="contractPercentUnder"
-                        placeholder="이하일 때 수수료(%)">
+                  <input type="number" step="0.01" min="0" max="100" class="form-control form-control-user" id="contractPercentUnder" name="contractPercentUnder" placeholder="이하일 때 수수료(%)">
                   <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
                 </div>
                 <div class="form-group">
-                  <input type="number" step="0.01" min="0" max="100"
-                        class="form-control form-control-user"
-                        id="contractPercentOver" name="contractPercentOver"
-                        placeholder="초과일 때 수수료(%)">
+                  <input type="number" step="0.01" min="0" max="100" class="form-control form-control-user" id="contractPercentOver" name="contractPercentOver" placeholder="초과일 때 수수료(%)">
                   <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
                 </div>
               </div>
-
-              <!-- 이미 계약서 제출(사전 체결) -->
               <div class="form-group form-check mt-2">
                 <input type="checkbox" class="form-check-input" id="contractSkip" name="contractSkip" value="1">
                 <label class="form-check-label" for="contractSkip">이미 계약서를 제출한 업체(발송 스킵)</label>
               </div>
             </div>
 
-            <!-- 정산 정보: 사업자/은행/계좌 -->
+            <!-- 정산(등록) -->
             <div class="border-top pt-3 mt-3">
               <div class="form-group">
-                <input type="text" class="form-control form-control-user"
-                      id="businessRegistrationNumber" name="businessRegistrationNumber"
-                      placeholder="사업자등록번호 (숫자만 10자리)" maxlength="12">
+                <input type="text" class="form-control form-control-user" id="businessRegistrationNumber" name="businessRegistrationNumber" placeholder="사업자등록번호 (숫자만 10자리)" maxlength="12">
                 <div class="invalid-feedback">사업자등록번호는 숫자 10자리여야 합니다.</div>
               </div>
-
               <div class="form-group">
-                <!-- 필요하면 은행코드 옵션을 서버에서 렌더링해도 되고, 간단히 텍스트로 받아도 OK -->
                 <select class="form-control" id="bankCode" name="bankCode">
                   <option value="">정산은행 선택</option>
                   <option value="088">신한은행</option>
@@ -861,20 +747,14 @@
                   <option value="081">하나은행</option>
                   <option value="011">농협은행</option>
                   <option value="020">우리은행</option>
-                  <!-- ... 프로젝트 BANK_CODE_MAP에 맞춰 추가 -->
                 </select>
                 <div class="invalid-feedback">정산은행을 선택해 주세요.</div>
               </div>
-
               <div class="form-group">
-                <input type="text" class="form-control form-control-user"
-                      id="accountNumber" name="accountNumber"
-                      placeholder="계좌번호 (숫자/‘-’ 허용)" maxlength="30">
+                <input type="text" class="form-control form-control-user" id="accountNumber" name="accountNumber" placeholder="계좌번호 (숫자/‘-’ 허용)" maxlength="30">
                 <div class="invalid-feedback">유효한 계좌번호를 입력해 주세요.</div>
               </div>
             </div>
-
-
           </form>
         </div>
 
@@ -899,35 +779,26 @@
 
         <div class="modal-body">
           <form id="editSupplierForm" novalidate>
-            <!-- 키/낙관적 잠금용 -->
             <input type="hidden" name="seq">
             <input type="hidden" name="updatedAt">
 
-            <!-- 회사명 -->
             <div class="form-group">
               <input type="text" class="form-control" name="companyName" placeholder="회사명" maxlength="20" required>
               <div class="invalid-feedback">회사명은 필수이며 최대 20자입니다.</div>
             </div>
-
-            <!-- CAFE24 코드 -->
             <div class="form-group">
               <input type="text" class="form-control" name="supplierCode" placeholder="CAFE24 코드" maxlength="20" required>
               <div class="invalid-feedback">CAFE24 코드는 필수이며 최대 20자입니다.</div>
             </div>
-
-            <!-- 공급사 ID -->
             <div class="form-group">
               <input type="text" class="form-control" name="supplierID" placeholder="공급사 ID(최소 6자)" minlength="6" required>
               <div class="invalid-feedback">공급사 ID는 최소 6자 이상입니다.</div>
             </div>
-
-            <!-- 공급사 PW(변경 시에만 입력) -->
             <div class="form-group">
               <input type="text" class="form-control" name="supplierPW" placeholder="공급사 PW(변경 시에만 입력)" maxlength="100">
               <div class="invalid-feedback">PW는 최대 100자입니다.</div>
             </div>
 
-            <!-- URL/담당자/직책/연락처/이메일 -->
             <div class="form-group">
               <input type="text" class="form-control" name="supplierURL" placeholder="자사몰 URL" maxlength="100">
               <div class="invalid-feedback">올바른 URL 형식이 아닙니다.</div>
@@ -949,7 +820,7 @@
               <div class="invalid-feedback">올바른 이메일 형식이 아닙니다.</div>
             </div>
 
-            <!-- (수정) 계약서 선택/입력 -->
+            <!-- 계약(수정) -->
             <div class="border-top pt-3 mt-3">
               <div class="form-group">
                 <label class="small text-muted mb-1">계약서 선택</label>
@@ -959,52 +830,38 @@
                   <option value="B">B. 특정금액 기준 구간별 수수료</option>
                 </select>
               </div>
-
               <div id="editContractAFields" class="d-none">
                 <div class="form-group">
-                  <input type="number" step="0.01" min="0" max="100"
-                        class="form-control" id="editContractPercent" name="contractPercent"
-                        placeholder="수수료(%)">
+                  <input type="number" step="0.01" min="0" max="100" class="form-control" id="editContractPercent" name="contractPercent" placeholder="수수료(%)">
                   <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
                 </div>
               </div>
-
               <div id="editContractBFields" class="d-none">
                 <div class="form-group">
-                  <input type="number" step="1" min="0"
-                        class="form-control" id="editContractThreshold" name="contractThreshold"
-                        placeholder="특정 금액(원)">
+                  <input type="number" step="1" min="0" class="form-control" id="editContractThreshold" name="contractThreshold" placeholder="특정 금액(원)">
                   <div class="invalid-feedback">0 이상의 금액을 입력해 주세요.</div>
                 </div>
                 <div class="form-group">
-                  <input type="number" step="0.01" min="0" max="100"
-                        class="form-control" id="editContractPercentUnder" name="contractPercentUnder"
-                        placeholder="이하일 때 수수료(%)">
+                  <input type="number" step="0.01" min="0" max="100" class="form-control" id="editContractPercentUnder" name="contractPercentUnder" placeholder="이하일 때 수수료(%)">
                   <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
                 </div>
                 <div class="form-group">
-                  <input type="number" step="0.01" min="0" max="100"
-                        class="form-control" id="editContractPercentOver" name="contractPercentOver"
-                        placeholder="초과일 때 수수료(%)">
+                  <input type="number" step="0.01" min="0" max="100" class="form-control" id="editContractPercentOver" name="contractPercentOver" placeholder="초과일 때 수수료(%)">
                   <div class="invalid-feedback">0~100 사이의 수수료(%)를 입력해 주세요.</div>
                 </div>
               </div>
-
               <div class="form-group form-check mt-2">
                 <input type="checkbox" class="form-check-input" id="editContractSkip" name="contractSkip" value="1">
                 <label class="form-check-label" for="editContractSkip">이미 계약서를 제출한 업체(발송 스킵)</label>
               </div>
             </div>
 
-            <!-- (수정) 정산 정보 -->
+            <!-- 정산(수정) -->
             <div class="border-top pt-3 mt-3">
               <div class="form-group">
-                <input type="text" class="form-control"
-                      name="businessRegistrationNumber"
-                      placeholder="사업자등록번호 (숫자만 10자리)" maxlength="12">
+                <input type="text" class="form-control" name="businessRegistrationNumber" placeholder="사업자등록번호 (숫자만 10자리)" maxlength="12">
                 <div class="invalid-feedback">사업자등록번호는 숫자 10자리여야 합니다.</div>
               </div>
-
               <div class="form-group">
                 <select class="form-control" name="bankCode">
                   <option value="">정산은행 선택</option>
@@ -1013,18 +870,14 @@
                   <option value="081">하나은행</option>
                   <option value="011">농협은행</option>
                   <option value="020">우리은행</option>
-                  <!-- ... -->
                 </select>
                 <div class="invalid-feedback">정산은행을 선택해 주세요.</div>
               </div>
-
               <div class="form-group">
-                <input type="text" class="form-control"
-                      name="accountNumber" placeholder="계좌번호 (숫자/‘-’ 허용)" maxlength="30">
+                <input type="text" class="form-control" name="accountNumber" placeholder="계좌번호 (숫자/‘-’ 허용)" maxlength="30">
                 <div class="invalid-feedback">유효한 계좌번호를 입력해 주세요.</div>
               </div>
             </div>
-
           </form>
         </div>
 
@@ -1037,5 +890,4 @@
     </div>
   </div>
 
-  <!-- Footer-->
   {% include './common/footer.html' %}

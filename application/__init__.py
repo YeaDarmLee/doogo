@@ -49,6 +49,9 @@ app.register_blueprint(slack_commands)
 app.register_blueprint(slack_actions)
 app.register_blueprint(cafe24_oauth_controller)
 
+from application.controllers.test_jobs import test_jobs
+app.register_blueprint(test_jobs)
+
 # 상태 매핑 딕셔너리
 STATE_CODE_MAP = {
   "": "대기",

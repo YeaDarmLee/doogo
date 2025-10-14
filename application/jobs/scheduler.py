@@ -93,6 +93,29 @@ def start_scheduler(app):
     misfire_grace_time=3600,
     replace_existing=True
   )
+  
+  # ========= 신규: 격주 정산 (전월 1일~말일) =========
+  from application.jobs.settlementJob import run_biweekly_settlement  # ⬅ import
+
+  def biweekly_settlement_job():
+    with app.app_context():
+      app.logger.info("[settlement_biweekly_job] started")
+      try:
+        run_biweekly_settlement(out_dir="/tmp")
+      except Exception as e:
+        app.logger.exception(e)
+      finally:
+        app.logger.info("[settlement_biweekly_job] finished")
+
+  scheduler.add_job(
+    biweekly_settlement_job,
+    trigger=CronTrigger(day='1,15', hour=8, minute=0, second=0),  # 매월 1일/15일 08:00(KST)
+    id='settlement_biweekly_job',
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=3600,
+    replace_existing=True
+  )
 
   scheduler.start()
   atexit.register(lambda: scheduler.shutdown(wait=False))  # 프로세스 종료 시에만 정리

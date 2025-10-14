@@ -3,7 +3,8 @@ import os, hmac, hashlib, time, json
 import datetime, time, uuid
 from flask import Blueprint, request, current_app
 from slack_sdk.errors import SlackApiError
-from typing import Optional, List, Dict, Any  # 파일 상단에 추가
+from typing import Optional, List, Dict, Any
+from datetime import date, timedelta, datetime as dt
 
 from application.src.service.slack_service import ensure_client, _sleep_if_rate_limited
 from application.src.repositories.SupplierListRepository import SupplierListRepository
@@ -13,6 +14,51 @@ from application.src.service.toss_service import list_sellers, create_payouts_en
 slack_actions = Blueprint("slack_actions", __name__, url_prefix="/slack")
 
 _SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+
+# YYYY-MM-DD 문자열 세트를 date 객체 세트로 변환
+_HOLIDAYS_STR = {
+  # ==== 2025 ====
+  "2025-01-01","2025-01-28","2025-01-29","2025-01-30",
+  "2025-03-01","2025-03-03",
+  "2025-05-05","2025-05-06",
+  "2025-06-06",
+  "2025-08-15",
+  "2025-10-03","2025-10-05","2025-10-06","2025-10-07","2025-10-08","2025-10-09",
+  "2025-12-25",
+  # ==== 2026 ====
+  "2026-01-01",
+  "2026-02-16","2026-02-17","2026-02-18",
+  "2026-03-01","2026-03-02",
+  "2026-05-05","2026-05-24","2026-05-25",
+  "2026-06-06",
+  "2026-08-15","2026-08-17",
+  "2026-09-24","2026-09-25","2026-09-26",
+  "2026-10-03","2026-10-05",
+  "2026-10-09",
+  "2026-12-25",
+}
+_HOLIDAYS = {dt.strptime(d, "%Y-%m-%d").date() for d in _HOLIDAYS_STR}
+
+def _is_business_day(d: date) -> bool:
+  # 월(0)~금(4) && 공휴일 아님
+  return d.weekday() < 5 and d not in _HOLIDAYS
+
+def _next_business_day(d: date) -> date:
+  cur = d
+  while not _is_business_day(cur):
+    cur += timedelta(days=1)
+  return cur
+def compute_payout_date(base: date, *, prefer_one_day: bool = True) -> date:
+  """
+  prefer_one_day=True  → +1일이 영업일이면 그대로, 아니면 +1일부터 다음 영업일
+  prefer_one_day=False → +2일 기준으로 다음 영업일
+  """
+  if prefer_one_day:
+    d1 = base + timedelta(days=1)
+    return d1 if _is_business_day(d1) else _next_business_day(d1)
+  else:
+    d2 = base + timedelta(days=2)
+    return _next_business_day(d2)
 
 def _verify_slack_signature(req) -> bool:
   """
@@ -109,9 +155,27 @@ def _handle_payout_confirm(payload: dict, action: dict):
   final_amount  = int(val.get("final_amount") or 0)
   
   today = datetime.date.today()
-  payout_date = (today + datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+  #  - True  : +1 우선(영업일이면 그 날, 아니면 그 다음 영업일)
+  #  - False : 기존처럼 +2 기준으로 다음 영업일
+  payout_dt = compute_payout_date(today, prefer_one_day=True)
+  payout_date = payout_dt.strftime("%Y-%m-%d")
   
   s = SupplierListRepository.findBySupplierCode(supply_id)
+
+  # 📌 final_amount가 0이면 바로 종료
+  if final_amount <= 0:
+    _chat_update(
+      ch, ts,
+      text=":zzz: 이번 기간에는 매출이 없어 정산할 내용이 없습니다.",
+      blocks=[{
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": f":zzz: *정산 불필요*\n• 정산금액: `0`\n• 정산 기간: `{start}-{end}`"
+        }
+      }]
+    )
+    return
 
   # 처리 중 상태로 즉시 업데이트 (버튼 제거)
   _chat_update(

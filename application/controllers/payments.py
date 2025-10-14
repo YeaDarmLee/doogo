@@ -95,9 +95,9 @@ def index():
   return render_template(
     "payments.html",
     pageName="payments",
-    available=available,
+    available=available+requested_pay,
     waitingPayment=requested_pay,
-    availableExpected=available-requested_pay,
+    availableExpected=available,
     pending=pending,
     items=merged,
     startDate=start_date.strftime("%Y-%m-%d"),

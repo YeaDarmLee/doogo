@@ -22,6 +22,7 @@ import time
 import logging, threading, traceback
 from typing import Optional, Iterable, Union, Dict, Any, Tuple
 from flask import current_app
+from datetime import date, datetime
 
 from slack_sdk import WebClient as _SlackClient
 from slack_sdk.errors import SlackApiError
@@ -278,6 +279,10 @@ def rename_channel(channel: str, new_name: str) -> bool:
 # =============================================================================
 # 파일 업로드
 # =============================================================================
+def _to_iso(d):
+  if isinstance(d, (date, datetime)):
+    return d.strftime("%Y-%m-%d")
+  return d
 
 def _build_settlement_button_blocks(payload: Dict[str, Any]) -> list:
   """
@@ -290,8 +295,8 @@ def _build_settlement_button_blocks(payload: Dict[str, Any]) -> list:
   value_json = json.dumps({
     "supply_id": payload.get("supply_id"),
     "channel": payload.get("channel"),
-    "start": payload.get("start"),
-    "end": payload.get("end"),
+    "start": _to_iso(payload.get("start")),
+    "end": _to_iso(payload.get("end")),
     "final_amount": int(payload.get("final_amount", 0))
   }, ensure_ascii=False)
 
@@ -366,6 +371,8 @@ def upload_file_with_button(
   import os, time, traceback
   from typing import Optional
   from slack_sdk.errors import SlackApiError
+  fpath, summary = make_settlement_excel(start, end, supply_id=supply_id, out_dir="/tmp")
+  print(f"[slash:/settlement] excel_ready path={fpath} summary={summary} supply_code={supply_id}")
 
   def _wait_file_message_ts(cli, channel_id: str, file_id: str, *, timeout_sec: int = 20, interval: float = 0.8) -> Optional[str]:
     """
@@ -402,7 +409,6 @@ def upload_file_with_button(
   def _bg(app):
     with app.app_context():
       try:
-        fpath, summary = make_settlement_excel(start, end, supply_id=supply_id, out_dir="/tmp")
         cli = ensure_client()
 
         channel_id = _ensure_channel_id(cli, channel or "")
@@ -479,7 +485,8 @@ def upload_file_with_button(
   app_obj = current_app._get_current_object()
   t = threading.Thread(target=_bg, args=(app_obj,), daemon=True)
   t.start()
-  return True
+  
+  return fpath, summary
 
 # =============================================================================
 # 사용자 조회/초대

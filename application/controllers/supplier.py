@@ -3,7 +3,7 @@
 from flask import Blueprint, render_template, request, jsonify
 from flask_jwt_extended import jwt_required
 from sqlalchemy.exc import SQLAlchemyError
-import os, requests, base64, json
+import os, requests, base64, json, re
 from typing import Any, Dict, Optional
 
 from application.src.models.SupplierList import SupplierList
@@ -13,7 +13,7 @@ from application.src.repositories.SupplierListRepository import (
   STATE_PENDING, STATE_APPROVED, STATE_REJECTED
 )
 from application.src.repositories.SupplierDetailRepository import SupplierDetailRepository
-from application.src.service.toss_service import create_seller_encrypted
+from application.src.service.toss_service import create_seller_encrypted, list_sellers
 from application.src.service.eformsign_service import after_slack_success
 
 # Cafe24 OAuth 토큰 서비스 사용(※ 토큰은 여기서 동적으로 발급/갱신)
@@ -37,9 +37,12 @@ def _cafe24_headers():
 
 # --- 공통: 상세 머지 유틸 ---
 def _merge_supplier_with_detail(s: SupplierList, d: Optional[SupplierDetail]) -> dict:
-  """
-  SupplierList + SupplierDetail 을 하나의 dict 로 합쳐 프런트에 전달
-  """
+  def _f(v):
+    try:
+      return float(v) if v is not None else None
+    except Exception:
+      return None
+
   base = {
     "seq": s.seq,
     "companyName": s.companyName or "",
@@ -55,9 +58,15 @@ def _merge_supplier_with_detail(s: SupplierList, d: Optional[SupplierDetail]) ->
     "number": s.number or "",
     "email": s.email or "",
     "updatedAt": s.updatedAt.isoformat() if getattr(s, "updatedAt", None) else None,
+    "contractTemplate": (getattr(s, "contractTemplate", None) or "").upper(),
+    "contractPercent": _f(getattr(s, "contractPercent", None)),
+    "contractThreshold": getattr(s, "contractThreshold", None),
+    "contractPercentUnder": _f(getattr(s, "contractPercentUnder", None)),
+    "contractPercentOver": _f(getattr(s, "contractPercentOver", None)),
+    "contractSkip": 1 if str(getattr(s, "contractSkip", 0)).lower() in ("1","true") else 0,
   }
+
   if not d:
-    # 상세가 아직 없으면 상세 블록을 None/빈값으로 채워 넣기
     base["detail"] = {
       "businessType": None,
       "companyName": None,
@@ -85,6 +94,7 @@ def _merge_supplier_with_detail(s: SupplierList, d: Optional[SupplierDetail]) ->
     "updatedAt": d.updatedAt.isoformat() if getattr(d, "updatedAt", None) else None,
   }
   return base
+
 
 # -----------------------------------
 # View: 공급사 관리 페이지
@@ -126,6 +136,11 @@ def addSupplier():
     # 신규: 계약 필드
     contract_template = (g("contractTemplate") or "").upper()  # '', 'A', 'B'
     contract_skip     = 1 if str(g("contractSkip") or "0") in ("1","true","True") else 0
+    
+    # 신규: 상세(정산) 필드
+    bizno_raw   = g("businessRegistrationNumber") or None
+    bank_code   = g("bankCode") or None
+    account_no  = g("accountNumber") or None
 
     # 숫자 파싱 유틸
     def to_decimal(val):
@@ -165,6 +180,14 @@ def addSupplier():
         if contract_percent_over is None or contract_percent_over < 0 or contract_percent_over > 100:
           errors["contractPercentOver"] = "0~100 사이 수수료(%)를 입력해 주세요."
 
+    # 상세 검증(값이 있으면 형식 체크)
+    if bizno_raw:
+      biz_digits = re.sub(r"\D", "", str(bizno_raw))
+      if len(biz_digits) != 10:
+        errors["businessRegistrationNumber"] = "사업자등록번호는 숫자 10자리여야 합니다."
+    if account_no and len(account_no) > 30:
+      errors["accountNumber"] = "계좌번호는 최대 30자까지 입력 가능합니다."
+      
     if errors:
       return jsonify({"code": 40001, "errors": errors}), 400
 
@@ -186,18 +209,29 @@ def addSupplier():
       managerRank=manager_rank,
       number=number,
       email=email,
-
-      # 신규 계약 필드 저장
+      # 계약 필드
       contractTemplate=contract_template or None,
       contractPercent=contract_percent,
       contractThreshold=contract_threshold,
       contractPercentUnder=contract_percent_under,
       contractPercentOver=contract_percent_over,
       contractSkip=contract_skip,
-      contractStatus=contract_status
+      contractStatus=contract_status,
+      stateCode='R'
     )
-
-    SupplierListRepository.save(s)
+    s = SupplierListRepository.save(s)  # s.seq 확정
+    
+    sd = SupplierDetail(
+      supplierSeq=s.seq,
+      businessType='CORPORATE',
+      companyName=company_name,
+      businessRegistrationNumber = bizno_raw,
+      bankCode = bank_code,
+      accountNumber = account_no
+    )
+    
+    SupplierDetailRepository.save(sd)
+    
     return jsonify({"code": 20000, "seq": s.seq})
 
   except SQLAlchemyError as e:
@@ -279,6 +313,22 @@ def updateSupplier():
     s.email = email
 
     SupplierListRepository.save(s)
+    
+    # 상세(정산) 필드
+    sd = SupplierDetailRepository.findBySupplierSeq(s.seq)
+    
+    bizno_raw  = g("businessRegistrationNumber") or None
+    bank_code  = g("bankCode") or None
+    account_no = g("accountNumber") or None
+    
+    sd.businessRegistrationNumber = bizno_raw
+    sd.bankCode = bank_code
+    sd.accountNumber = account_no
+    
+    SupplierDetailRepository.save(sd)
+    
+    
+    
     return jsonify({"code": 20000, "seq": s.seq,
                     "updatedAt": s.updatedAt.isoformat() if getattr(s, "updatedAt", None) else None})
 

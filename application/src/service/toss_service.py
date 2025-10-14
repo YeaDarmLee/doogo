@@ -202,6 +202,45 @@ def get_seller(seller_id: str) -> Tuple[int, Dict[str, Any]]:
   except Exception:
     return r.status_code, {"raw": r.text}
 
+def update_seller_encrypted(seller_id: str, seller_body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+  """
+  셀러 수정 (ENCRYPTION)
+  - Endpoint: POST https://api.tosspayments.com/v2/sellers/{id}
+  - 요청/응답: JWE (text/plain + TossPayments-api-security-mode: ENCRYPTION)
+  - 입력: 수정할 필드만 포함. 삭제하려면 해당 필드에 null 전송(등록 시 필수였던 필드는 삭제 불가)
+  - 출력: (status, 복호화된 응답 dict 또는 JSON)
+  """
+  if not seller_id:
+    raise ValueError("seller_id는 필수입니다.")
+
+  url = f"https://api.tosspayments.com/v2/sellers/{seller_id}"
+  jwe_body = _encrypt_jwe(seller_body)
+  headers = {
+    "Authorization": _basic_auth(),
+    "Content-Type": "text/plain",
+    "TossPayments-api-security-mode": "ENCRYPTION",
+  }
+  r = requests.post(url, headers=headers, data=jwe_body)
+
+  ctype = r.headers.get("Content-Type", "")
+  if ctype.startswith("application/json"):
+    try:
+      return r.status_code, r.json()
+    except Exception:
+      return r.status_code, {"raw": r.text}
+  else:
+    try:
+      return r.status_code, _decrypt_jwe(r.text)
+    except Exception:
+      return r.status_code, {"raw": r.text, "decryptError": True}
+    
+def update_seller_fields(seller_id: str, **fields) -> Tuple[int, Dict[str, Any]]:
+  """
+  편의 함수: 키워드 인자로 받은 필드만 보내서 수정
+  예) update_seller_fields(seller_id, email="a@b.com", phoneNumber="01012345678")
+  """
+  return update_seller_encrypted(seller_id, fields)
+
 def list_sellers(
     limit: int = 10,
     startingAfter: Optional[str] = None
