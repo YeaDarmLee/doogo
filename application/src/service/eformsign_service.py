@@ -372,7 +372,16 @@ def after_slack_success(supplier: SupplierList):
       )
       return
 
+    settlementCycle = ''
+    if supplier.settlementPeriod == 'M':
+      settlementCycle = '매월'
+    elif supplier.settlementPeriod == 'W':
+      settlementCycle = '매주'
+    elif supplier.settlementPeriod == '2W':
+      settlementCycle = '격주'
+      
     fields = [
+      {"id": "정산주기", "value": f"{settlementCycle}"},
       {"id": "수수료", "value": f"수수료 {pct}% 를"},
       {"id": "수수료_int", "value": f"{pct}"}
     ]
