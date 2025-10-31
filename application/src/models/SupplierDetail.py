@@ -47,3 +47,7 @@ class SupplierDetail(db.Model):
   updatedAt: Mapped[datetime] = mapped_column(
     "UPDT_DATE", db.DateTime, server_default=db.func.current_timestamp(), onupdate=db.func.current_timestamp(), comment="수정일"
   )
+
+  bizAddr: Mapped[Optional[str]] = mapped_column("BIZ_ADDR", db.String(200), nullable=True, comment="사업자 주소")
+  bizType: Mapped[Optional[str]] = mapped_column("BIZ_TYPE", db.String(40), nullable=True, comment="회사정보 - 업태")
+  bizClass: Mapped[Optional[str]] = mapped_column("BIZ_CLASS", db.String(40), nullable=True, comment="회사정보 - 업종")

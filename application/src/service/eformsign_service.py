@@ -374,11 +374,11 @@ def after_slack_success(supplier: SupplierList):
 
     settlementCycle = ''
     if supplier.settlementPeriod == 'M':
-      settlementCycle = '매월'
+      settlementCycle = '매월 1일'
     elif supplier.settlementPeriod == 'W':
-      settlementCycle = '매주'
+      settlementCycle = '매주 월요일'
     elif supplier.settlementPeriod == '2W':
-      settlementCycle = '격주'
+      settlementCycle = '격주 1, 15일'
       
     fields = [
       {"id": "정산주기", "value": f"{settlementCycle}"},
@@ -388,36 +388,35 @@ def after_slack_success(supplier: SupplierList):
     template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_A")
 
   elif t == "B":
-    th = supplier.contractThreshold
-    pu = supplier.contractPercentUnder
-    po = supplier.contractPercentOver
-    ok = True
-    try:
-      ok = (th is not None and int(th) >= 0 and
-            pu is not None and 0 <= float(pu) <= 100 and
-            po is not None and 0 <= float(po) <= 100)
-    except Exception:
-      ok = False
-    if not ok:
-      supplier.contractStatus = "E"
-      try:
-        db.session.commit()
-      except Exception:
-        db.session.rollback()
-      notify_contract_failed(
-        recipient_email=recipient_email,
-        supplier_name=supplier.companyName,
-        reason="계약서 B: 임계금액/수수료(%) 값이 유효하지 않습니다.",
-        supplier_channel_id=supplier.channelId,
-      )
-      return
+    # th = supplier.contractThreshold
+    # pu = supplier.contractPercentUnder
+    # po = supplier.contractPercentOver
+    # ok = True
+    # try:
+    #   ok = (th is not None and int(th) >= 0 and
+    #         pu is not None and 0 <= float(pu) <= 100 and
+    #         po is not None and 0 <= float(po) <= 100)
+    # except Exception:
+    #   ok = False
+    # if not ok:
+    #   supplier.contractStatus = "E"
+    #   try:
+    #     db.session.commit()
+    #   except Exception:
+    #     db.session.rollback()
+    #   notify_contract_failed(
+    #     recipient_email=recipient_email,
+    #     supplier_name=supplier.companyName,
+    #     reason="계약서 B: 임계금액/수수료(%) 값이 유효하지 않습니다.",
+    #     supplier_channel_id=supplier.channelId,
+    #   )
+    #   return
 
     # 실제 템플릿 필드 키는 eformsign 설정에 맞게 조정 필요
-    # fields = [
-    #   {"name": "threshold", "value": str(int(th))},
-    #   {"name": "percent_under", "value": str(pu)},
-    #   {"name": "percent_over", "value": str(po)},
-    # ]
+    fields = [
+      {"id": "수수료", "value": "수수료 10% 를"},
+      {"id": "수수료_int", "value": "10"}
+    ]
     template_id = os.getenv("EFORMSIGN_TEMPLATE_ID_B")
 
   else:

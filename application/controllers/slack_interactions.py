@@ -5,11 +5,14 @@ from flask import Blueprint, request, current_app
 from slack_sdk.errors import SlackApiError
 from typing import Optional, List, Dict, Any
 from datetime import date, timedelta, datetime as dt
+from decimal import Decimal, ROUND_HALF_UP
 
 from application.src.service.slack_service import ensure_client, _sleep_if_rate_limited
 from application.src.repositories.SupplierListRepository import SupplierListRepository
+from application.src.repositories.SupplierDetailRepository import SupplierDetailRepository
 
 from application.src.service.toss_service import list_sellers, create_payouts_encrypted
+from application.src.service.barobill_service import BaroBillClient, BaroBillError
 
 slack_actions = Blueprint("slack_actions", __name__, url_prefix="/slack")
 
@@ -59,6 +62,17 @@ def compute_payout_date(base: date, *, prefer_one_day: bool = True) -> date:
   else:
     d2 = base + timedelta(days=2)
     return _next_business_day(d2)
+
+def split_vat(total: int, vat_rate: Decimal = Decimal("0.1")) -> tuple[int, int]:
+  """
+  total: 부가세 포함 금액
+  vat_rate: 0.1 = 10%
+  return: (공급가액, 세액)
+  """
+  total_dec = Decimal(total)
+  supply = (total_dec / (Decimal(1) + vat_rate)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+  tax = total_dec - supply
+  return int(supply), int(tax)
 
 def _verify_slack_signature(req) -> bool:
   """
@@ -235,6 +249,32 @@ def _handle_payout_confirm(payload: dict, action: dict):
         }
       }]
     )
+    
+    sd = SupplierDetailRepository.findBySupplierSeq(s.seq)
+    
+    baro = BaroBillClient()
+
+    supply, tax = split_vat(final_amount)
+    res = baro.regist_and_issue_taxinvoice(
+      target_corp_num=sd.businessRegistrationNumber,
+      target_corp_name=s.companyName,
+      target_ceo=sd.representativeName,
+      target_addr=sd.bizAddr,
+      target_contact=s.manager,
+      target_tel=s.number,
+      target_email=sd.companyEmail,
+      target_id=s.supplierID,
+      amount_total=f"{supply}",
+      tax_total=f"{tax}",
+      total_amount=f"{final_amount}",
+      items=[
+        {"name": "판매 지급 수수료", "qty": "1", "unit_price": f"{final_amount}", "amount": f"{supply}", "tax": f"{tax}"}
+      ],
+    )
+    if res == 1:
+      print('성공')
+    else:
+      print(f"⚠️ [에러] 발행 응답 코드: {res}")
   except Exception as e:
     _chat_update(
       ch, ts,

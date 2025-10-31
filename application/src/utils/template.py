@@ -86,6 +86,16 @@ _TEMPLATES_KO: Dict[str, str] = {
     "*정상적인 정산을 위해 토스페이먼츠로 전달된 셀러 등록을 위한 본인인증을 완료해주세요!*\n"
     ":round_pushpin: 운영 공지/가이드는 <#C09DBG0UYCS>, <#C09EAJ46Z5J> 채널을 참고해 주세요."
   ),
+  
+  # 바로빌 공동인증서 등록 요청
+  "barobill_cert_required": (
+    ":warning: *바로빌 공동인증서 등록 필요*\n"
+    "- 공급사: {supplier_name}\n"
+    "- 사업자번호: `{corp_num}` / 바로빌 ID: `{supplier_id}` / 바로빌 PW: `{supplier_pw}`\n"
+    "- 등록 URL: {cert_url}\n"
+    "위 링크는 바로빌 인증서 등록 페이지로 연결됩니다.\n"
+    "등록 완료 후 세금계산서 자동 발행이 가능합니다."
+  ),
 }
 
 _TEMPLATES = _TEMPLATES_KO  # 현재는 한국어만 사용

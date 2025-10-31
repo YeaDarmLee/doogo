@@ -15,7 +15,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from application.src.models import db
 from application.src.models.SupplierList import SupplierList
+from application.src.repositories.SupplierDetailRepository import SupplierDetailRepository
 from application.src.service.eformsign_service import after_slack_success
+from application.src.service.barobill_service import BaroBillClient, BaroBillError
 
 # 오케스트레이션(채널 생성/알림)은 서비스 레이어 사용
 from application.src.service.slack_provision_service import (
@@ -26,6 +28,7 @@ from application.src.service.slack_provision_service import (
 )
 
 from application.src.service import slack_service as SU
+from application.src.utils import template as TEMPLATE
 
 # stateCode semantics:
 #   None : 미처리
@@ -178,8 +181,50 @@ def process_pending_suppliers(batch_size: int = 10, lock_key: str = "job_supplie
         # 2-3) 계약서 전송
         if need_contract:
           after_slack_success(s)
+        
+        # 2-4) 바로빌 회원등록
+        sd = SupplierDetailRepository.findBySupplierSeq(s.seq)
+        baro = BaroBillClient()
 
-        # 2-4) 마무리 상태 정리
+        try:
+          if not baro.check_corp_is_member(sd.businessRegistrationNumber):
+            baro.regist_corp(
+              corp_num=sd.businessRegistrationNumber,
+              corp_name=s.companyName,
+              ceo_name=sd.representativeName,
+              biz_type=sd.bizType,
+              biz_class=sd.bizClass,
+              post_num="",    # 더 이상 사용되지 않는 항목
+              addr1=sd.bizAddr,
+              addr2="",
+              member_name=s.manager,
+              user_id=s.supplierID,
+              user_pwd=s.supplierPW,
+              grade=s.managerRank,
+              tel=s.number,
+              email=s.email,
+            )
+
+          url = baro.get_barobill_url(
+            sd.businessRegistrationNumber,
+            user_id=s.supplierID,
+            togo="CERT"
+          )
+          
+          template_msg = TEMPLATE.render(
+            "barobill_cert_required",
+            supplier_name=s.companyName,
+            corp_num=sd.businessRegistrationNumber,
+            supplier_id=s.supplierID,
+            supplier_pw=s.supplierPW,
+            cert_url=url,
+          )
+          SU.post_text(s.channelId, template_msg)
+
+        except BaroBillError as e:
+          print(f"API 실패: {e.code} / {e.message}")
+
+        # 2-5) 마무리 상태 정리
         if s.stateCode == "P":
           s.stateCode = "A"
           db.session.commit()

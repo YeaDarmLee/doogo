@@ -389,6 +389,9 @@ class Cafe24BoardsService:
             bankCode=self._normalize_bank_code(parsed.get('settle_bank')),
             accountNumber=parsed.get("settle_account"),
             holderName=parsed.get("settle_name"),
+            bizAddr=parsed.get("biz_addr"),
+            bizType=parsed.get("biz_type"),
+            bizClass=parsed.get("biz_type")
           )
           SupplierDetailRepository.save(detail)
           print(f"[detail] upsert ok supplier_seq={saved.seq} detail_id={detail.id}")
