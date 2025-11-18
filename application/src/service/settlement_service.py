@@ -82,6 +82,28 @@ def _req(method: str, path: str, params: Dict[str, Any], try_max=6) -> Dict[str,
       time.sleep(min(1.2 * i, 5))
   raise RuntimeError(last)
 
+def _infer_status_label(order: Dict[str, Any], item: Dict[str, Any]) -> str:
+  """
+  주문/품목 상태를 보고 '취소처리' / '배송완료' 라벨을 판단.
+  - 배송비 0원(무료배송)은 더 이상 취소 기준으로 사용하지 않음.
+  """
+  # 1) 주문 전체 취소 플래그
+  canceled_flag = str(order.get("canceled") or "").upper() == "T"
+  if canceled_flag:
+    return "취소처리"
+
+  # 2) (옵션) 품목/주문 상태 코드 기반 취소 판정이 필요하면 여기에 추가 가능
+  # item_status_code = (item.get("order_status") or "").strip()
+  # shipping_status = (order.get("shipping_status") or "").strip()
+  # item_status_text = (item.get("status_text") or "").strip()
+  #
+  # cancel_keywords = ("취소", "환불", "반품", "교환")
+  # if any(k in item_status_text for k in cancel_keywords):
+  #   return "취소처리"
+
+  # 3) 나머지는 모두 정상 배송으로 간주 (무료배송 포함)
+  return "배송완료"
+
 def prev_month_range(today: date) -> Tuple[date, date]:
   first_this = today.replace(day=1)
   last_prev = first_this - timedelta(days=1)
@@ -291,17 +313,18 @@ def build_settlement_rows(orders: List[Dict[str, Any]], *,
     buyer_name = _buyer_name(o)
     order_date_str = o.get("order_date") or o.get("payment_date") or ""
 
-    status_label = "취소처리" if _toi(shipfee) == 0 else "배송완료"
-    if status_label == "취소처리":
-      canceled_cnt += 1
-    else:
-      delivered_cnt += 1
-
     items = _filter_items_by_supplier(o.get("items") or [], supply_id)
     for it in items:
       code = str(it.get("order_item_code") or "")
       qty = _toi(it.get("quantity"))
 
+      # ✅ 여기서 상태를 결정 (배송비는 더 이상 기준으로 안 씀)
+      status_label = _infer_status_label(o, it)
+      if status_label == "취소처리":
+        canceled_cnt += 1
+      else:
+        delivered_cnt += 1
+        
       pay = it.get("payment_amount")
       if pay is None:
         base = _toi(it.get("product_price")) + _toi(it.get("option_price"))

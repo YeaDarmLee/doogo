@@ -35,6 +35,7 @@ from application.controllers.cafe24_webhooks import cafe24_webhooks_bp
 from application.controllers.slack_commands import slack_commands
 from application.controllers.slack_interactions import slack_actions
 from application.controllers.cafe24_oauth_controller import cafe24_oauth_controller
+from application.controllers.settlement_api import settlement_api
 
 # 블루프린트 등록
 app.register_blueprint(main)
@@ -49,8 +50,9 @@ app.register_blueprint(slack_commands)
 app.register_blueprint(slack_actions)
 app.register_blueprint(cafe24_oauth_controller)
 
-from application.controllers.test_jobs import test_jobs
-app.register_blueprint(test_jobs)
+app.register_blueprint(settlement_api)
+# from application.controllers.test_jobs import test_jobs
+# app.register_blueprint(test_jobs)
 
 # 상태 매핑 딕셔너리
 STATE_CODE_MAP = {
