@@ -540,6 +540,128 @@
 
   // 페이지 로드 훅(필요 시)
   $(function(){});
+
+  // ===========================================
+  //  정산서 재발행: 모달 오픈
+  // ===========================================
+  $(document).on('click', '.btn-settlement-reissue', function (e) {
+    e.preventDefault();
+    const $btn = $(this);
+
+    const supplyId = $btn.data('supplyId');
+    const channel = $btn.data('channel');
+    const company = $btn.data('company') || '';
+
+    if (!supplyId || !channel) {
+      Swal.fire({
+        icon: 'error',
+        title: '정보 부족',
+        text: '공급사 코드 또는 Slack 채널 정보가 없습니다. 관리자에게 문의해 주세요.'
+      });
+      return;
+    }
+
+    const $modal = $('#settlementReissueModal');
+    $modal.find('input[name="supplyId"]').val(supplyId);
+    $modal.find('input[name="channel"]').val(channel);
+    $modal.find('.js-company-name').text(company);
+
+    // 날짜 초기화
+    $modal.find('input[name="start"]').val('');
+    $modal.find('input[name="end"]').val('');
+
+    $modal.modal('show');
+  });
+
+  // ===========================================
+  //  정산서 재발행: 실행 함수
+  // ===========================================
+  function runSettlementReissue() {
+    const $modal = $('#settlementReissueModal');
+
+    const supplyId = $modal.find('input[name="supplyId"]').val();
+    const channel = $modal.find('input[name="channel"]').val();
+    const start = $modal.find('input[name="start"]').val();
+    const end = $modal.find('input[name="end"]').val();
+
+    if (!start || !end) {
+      Swal.fire({
+        icon: 'error',
+        title: '입력값 확인',
+        text: '시작일과 종료일을 모두 선택해 주세요.'
+      });
+      return;
+    }
+
+    if (start > end) {
+      Swal.fire({
+        icon: 'error',
+        title: '기간 오류',
+        text: '시작일이 종료일보다 이후일 수 없습니다.'
+      });
+      return;
+    }
+
+    Swal.fire({
+      icon: 'warning',
+      title: '정산서 재발행',
+      text: '해당 기간의 정산서를 다시 생성하여 Slack으로 발송할까요?',
+      showCancelButton: true,
+      confirmButtonText: '재발행',
+      cancelButtonText: '취소',
+      reverseButtons: true
+    }).then((res) => {
+      if (!res.isConfirmed) return;
+
+      // 로딩 표시
+      Swal.fire({
+        title: '정산서 생성 중...',
+        html: 'Slack으로 정산서를 전송하고 있습니다.',
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => {
+          Swal.showLoading();
+        }
+      });
+
+      $.ajax({
+        url: '/api/settlement/run',       // ⬅ 서버 엔드포인트 경로
+        method: 'POST',
+        contentType: 'application/json',
+        dataType: 'json',
+        data: JSON.stringify({
+          supply_id: supplyId,
+          channel: channel,
+          start: start,
+          end: end
+        })
+      }).done(function (res) {
+        if (res.ok) {
+          Swal.fire({
+            icon: 'success',
+            title: '정산서 재발행 완료',
+            html: 'Slack 채널로 정산서가 다시 발송되었습니다.',
+          }).then(function () {
+            $modal.modal('hide');
+            // 필요하면 여기서 location.reload() 추가 가능
+          });
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: '정산서 재발행 실패',
+            text: res.message || '정산서 재생성 중 문제가 발생했습니다.'
+          });
+        }
+      }).fail(function (xhr) {
+        const r = xhr.responseJSON || {};
+        Swal.fire({
+          icon: 'error',
+          title: '정산서 재발행 실패',
+          text: r.message || '정산서 재생성 중 문제가 발생했습니다.'
+        });
+      });
+    });
+  }
 </script>
 
 <body id="page-top">
@@ -628,6 +750,14 @@
                           <a href="#"
                              class="d-sm-inline-block btn btn-sm btn-primary shadow-sm btn-edit"
                              data-seq="{{ supplier.seq }}">수정</a>
+                          <!-- 🔹 정산서 재발행 버튼 추가 -->
+                          <button type="button"
+                            class="d-sm-inline-block btn btn-sm btn-outline-secondary ml-1 btn-settlement-reissue"
+                            data-supply-id="{{ supplier.supplierCode }}"
+                            data-channel="{{ supplier.channelId }}"
+                            data-company="{{ supplier.companyName }}">
+                          정산서 재발행
+                          </button>
                         </td>
                       </tr>
                     {% endfor %}
@@ -884,6 +1014,51 @@
         <div class="modal-footer">
           <button class="btn btn-secondary" type="button" data-dismiss="modal">취소</button>
           <button class="btn btn-primary" id="btnUpdateSupplier" type="button" onclick="saveEditSupplier()">저장</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 정산서 재발행 모달 -->
+  <div class="modal fade" id="settlementReissueModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+
+        <div class="modal-header">
+          <h5 class="modal-title">정산서 재발행</h5>
+          <button class="close" type="button" data-dismiss="modal" aria-label="Close">
+            <span>×</span>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <!-- 숨겨진 필드: supply_id / channel -->
+          <input type="hidden" name="supplyId">
+          <input type="hidden" name="channel">
+
+          <p class="mb-3">
+            <strong class="js-company-name"></strong> 공급사에 대해<br>
+            선택한 기간의 정산서를 다시 생성하여 Slack으로 발송합니다.
+          </p>
+
+          <div class="form-group">
+            <label for="settlementStart"><small>시작일</small></label>
+            <input type="date" class="form-control" id="settlementStart" name="start">
+          </div>
+          <div class="form-group">
+            <label for="settlementEnd"><small>종료일</small></label>
+            <input type="date" class="form-control" id="settlementEnd" name="end">
+          </div>
+
+          <p class="text-muted mb-0">
+            - 이미 발송된 기간과 겹치더라도 다시 생성됩니다.<br>
+          </p>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-dismiss="modal">취소</button>
+          <button class="btn btn-primary" type="button" onclick="runSettlementReissue()">정산서 재발행</button>
         </div>
 
       </div>
